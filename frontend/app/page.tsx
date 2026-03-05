@@ -13,14 +13,14 @@ export default function Home() {
   const [scanStatus, setScanStatus] = useState<string>("");
   const [error, setError] = useState<string>("");
 
-  const handleScan = async (tickers: string[], period: string) => {
+  const handleScan = async (tickers: string[], period: string, interval?: string, startDate?: string, endDate?: string) => {
     setIsScanning(true);
     setResults([]);
     setError("");
     setScanStatus("Starting scan...");
 
     try {
-      const { task_id } = await startScan({ tickers, period });
+      const { task_id } = await startScan({ tickers, period, interval, start_date: startDate, end_date: endDate });
       setScanStatus("Scanning pairs — this may take a moment...");
 
       const result = await pollResults(task_id, (update) => {

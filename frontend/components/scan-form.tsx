@@ -6,11 +6,12 @@ import "react-datepicker/dist/react-datepicker.css";
 import { getPresets, type Presets } from "@/lib/api";
 
 interface ScanFormProps {
-    onScan: (tickers: string[], period: string, startDate?: string, endDate?: string) => void;
+    onScan: (tickers: string[], period: string, interval?: string, startDate?: string, endDate?: string) => void;
     isScanning: boolean;
 }
 
 const PERIODS = [
+    { value: "60d", label: "60 Days" },
     { value: "6mo", label: "6 Months" },
     { value: "1y", label: "1 Year" },
     { value: "2y", label: "2 Years" },
@@ -22,6 +23,7 @@ const PERIODS = [
 export default function ScanForm({ onScan, isScanning }: ScanFormProps) {
     const [tickerInput, setTickerInput] = useState("");
     const [period, setPeriod] = useState("3y");
+    const [interval, setIntervalVal] = useState("1d");
     const [startDate, setStartDate] = useState<Date | null>(null);
     const [endDate, setEndDate] = useState<Date | null>(null);
     const [presets, setPresets] = useState<Presets>({});
@@ -32,6 +34,20 @@ export default function ScanForm({ onScan, isScanning }: ScanFormProps) {
             .then(setPresets)
             .catch(() => { });
     }, []);
+
+    useEffect(() => {
+        if (period === "60d") {
+            if (!["15m", "30m", "60m"].includes(interval)) {
+                setIntervalVal("15m");
+            }
+        } else if (period === "6mo" || period === "1y") {
+            if (!["1h", "1d"].includes(interval)) {
+                setIntervalVal("1d");
+            }
+        } else {
+            setIntervalVal("1d");
+        }
+    }, [period]);
 
     const handlePreset = (key: string) => {
         const tickers = presets[key];
@@ -47,13 +63,14 @@ export default function ScanForm({ onScan, isScanning }: ScanFormProps) {
             .map((t) => t.trim().toUpperCase())
             .filter(Boolean);
         if (tickers.length >= 2) {
-            if (period === "custom") {
-                const startStr = startDate ? startDate.toISOString().split("T")[0] : undefined;
-                const endStr = endDate ? endDate.toISOString().split("T")[0] : undefined;
-                onScan(tickers, period, startStr, endStr);
-            } else {
-                onScan(tickers, period);
+            const startStr = startDate ? startDate.toISOString().split("T")[0] : undefined;
+            const endStr = endDate ? endDate.toISOString().split("T")[0] : undefined;
+
+            let finalInterval = interval;
+            if (period !== "60d" && period !== "6mo" && period !== "1y") {
+                finalInterval = "1d"; // For other periods, enforce 1d explicitly or depend on your backend default
             }
+            onScan(tickers, period, finalInterval, startStr, endStr);
         }
     };
 
@@ -223,6 +240,50 @@ export default function ScanForm({ onScan, isScanning }: ScanFormProps) {
                                     className="custom-date-picker"
                                     popperPlacement="bottom-end"
                                 />
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Interval Selection */}
+                    {(period === "60d" || period === "6mo" || period === "1y") && (
+                        <div style={{ marginTop: "12px", animation: "fadeIn 0.2s" }}>
+                            <label style={{
+                                display: "block",
+                                fontSize: "12px",
+                                fontWeight: 600,
+                                color: "var(--color-text-secondary)",
+                                textTransform: "uppercase",
+                                letterSpacing: "0.05em",
+                                marginBottom: "8px",
+                            }}>
+                                Interval
+                            </label>
+                            <div style={{ display: "flex", gap: "6px" }}>
+                                {(period === "60d" ? ["15m", "30m", "60m"] : ["1h", "1d"]).map((intVal) => (
+                                    <button
+                                        key={intVal}
+                                        onClick={() => setIntervalVal(intVal)}
+                                        style={{
+                                            padding: "8px 16px",
+                                            borderRadius: "8px",
+                                            fontSize: "13px",
+                                            fontWeight: 500,
+                                            cursor: "pointer",
+                                            transition: "all 0.2s",
+                                            border: interval === intVal
+                                                ? "1px solid var(--color-accent-blue)"
+                                                : "1px solid var(--color-border)",
+                                            background: interval === intVal
+                                                ? "rgba(99, 102, 241, 0.2)"
+                                                : "transparent",
+                                            color: interval === intVal
+                                                ? "var(--color-accent-cyan)"
+                                                : "var(--color-text-muted)",
+                                        }}
+                                    >
+                                        {intVal}
+                                    </button>
+                                ))}
                             </div>
                         </div>
                     )}
