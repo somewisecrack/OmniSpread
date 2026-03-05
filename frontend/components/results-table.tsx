@@ -7,13 +7,23 @@ interface ResultsTableProps {
     results: PairResult[];
     isLoading: boolean;
     onRowClick: (pair: PairResult) => void;
+    interval: string;
 }
 
 type SortKey = keyof PairResult;
 
-export default function ResultsTable({ results, isLoading, onRowClick }: ResultsTableProps) {
+export default function ResultsTable({ results, isLoading, onRowClick, interval }: ResultsTableProps) {
     const [sortKey, setSortKey] = useState<SortKey>("prob_profit");
     const [sortAsc, setSortAsc] = useState(false);
+
+    const formatHalfLife = (hl: number, interval: string) => {
+        if (interval === "1h") return `${hl}h`;
+        if (interval === "15m") return `${(hl * 15) / 60}h`;
+        if (interval === "30m") return `${(hl * 30) / 60}h`;
+        if (interval === "60m") return `${(hl * 60) / 60}h`;
+        if (interval === "1d") return `${hl}d`;
+        return `${hl}`;
+    };
 
     const handleSort = (key: SortKey) => {
         if (sortKey === key) {
@@ -211,7 +221,7 @@ export default function ResultsTable({ results, isLoading, onRowClick }: Results
                                 </td>
                                 {/* Half-Life */}
                                 <td style={{ padding: "12px 10px", textAlign: "center", color: "var(--color-text-secondary)", fontSize: "12px" }}>
-                                    {res.half_life}d
+                                    {formatHalfLife(res.half_life, interval)}
                                 </td>
                                 {/* Hurst */}
                                 <td style={{
