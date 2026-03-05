@@ -52,79 +52,87 @@ class OmniSpreadEngine:
     # ========================
 
     def fetch_data(self):
+        """Download price data in small batches to avoid yfinance throttling inside FastAPI."""
+        import time
         logger.info(f"Fetching data for {len(self.tickers)} tickers...")
-        kwargs = {
+
+        base_kwargs = {
             "interval": self.interval,
             "auto_adjust": False,
             "progress": False,
         }
         if self.start_date and self.end_date:
-            kwargs.update({"start": self.start_date, "end": self.end_date})
+            base_kwargs.update({"start": self.start_date, "end": self.end_date})
         else:
-            kwargs.update({"period": self.period})
+            base_kwargs.update({"period": self.period})
 
-        to_fetch = list(self.tickers)
+        BATCH_SIZE = 20
+        all_batches = [self.tickers[i:i + BATCH_SIZE] for i in range(0, len(self.tickers), BATCH_SIZE)]
         data_frames = []
-        
-        import time
-        for attempt in range(3):
-            if not to_fetch:
-                break
-            if attempt > 0:
-                logger.info(f"Retrying {len(to_fetch)} missing tickers (attempt {attempt+1})...")
-                time.sleep(2)
-                
-            try:
-                df = yf.download(to_fetch, **kwargs)
-            except Exception as e:
-                logger.warning(f"yf.download error: {e}")
-                continue
-                
-            if df.empty:
-                continue
-                
-            if len(to_fetch) == 1:
-                if "Adj Close" in df:
-                    adj_close = pd.DataFrame({to_fetch[0]: df["Adj Close"]})
-                else:
-                    adj_close = pd.DataFrame()
-            else:
-                # Since yfinance 0.2.x, multi-ticker passes MultiIndex columns
-                if isinstance(df.columns, pd.MultiIndex):
-                    try:
-                        adj_close = df["Adj Close"]
-                    except KeyError:
-                        logger.warning("'Adj Close' missing in MultiIndex")
-                        adj_close = pd.DataFrame()
-                else:
-                    # In some rare yfinance errors, it falls back
-                    if "Adj Close" in df:
-                        adj_close = pd.DataFrame({to_fetch[0]: df["Adj Close"]})
-                    else:
-                        adj_close = pd.DataFrame()
 
-            if not adj_close.empty:
-                valid = adj_close.dropna(axis=1, how='all').columns.tolist()
-                if valid:
-                    data_frames.append(adj_close[valid])
-                to_fetch = [t for t in to_fetch if t not in valid]
+        for batch_idx, batch in enumerate(all_batches):
+            if batch_idx > 0:
+                time.sleep(1.5)  # brief pause between batches to avoid rate-limiting
+
+            batch_df = None
+            for attempt in range(3):
+                if attempt > 0:
+                    time.sleep(3 * attempt)
+                try:
+                    raw = yf.download(batch, **base_kwargs)
+                    if not raw.empty:
+                        batch_df = raw
+                        break
+                except Exception as e:
+                    logger.warning(f"Batch {batch_idx+1} attempt {attempt+1} error: {e}")
+
+            if batch_df is None or batch_df.empty:
+                logger.warning(f"Batch {batch_idx+1} returned no data after 3 attempts")
+                continue
+
+            # Extract Adj Close — always MultiIndex in modern yfinance
+            if isinstance(batch_df.columns, pd.MultiIndex):
+                try:
+                    adj = batch_df["Adj Close"]
+                except KeyError:
+                    logger.warning(f"Batch {batch_idx+1}: 'Adj Close' missing in MultiIndex")
+                    continue
+            else:
+                if "Adj Close" in batch_df.columns:
+                    adj = batch_df[["Adj Close"]]
+                    adj.columns = [batch[0]]
+                else:
+                    logger.warning(f"Batch {batch_idx+1}: no Adj Close column found")
+                    continue
+
+            # Handle single-ticker downloads that return a Series under MultiIndex
+            if isinstance(adj, pd.Series):
+                adj = adj.to_frame(name=batch[0])
+
+            valid_cols = adj.dropna(axis=1, how="all").columns.tolist()
+            if valid_cols:
+                data_frames.append(adj[valid_cols])
+                logger.info(f"Batch {batch_idx+1}: got {len(valid_cols)}/{len(batch)} tickers")
+            else:
+                logger.warning(f"Batch {batch_idx+1}: all columns NaN after dropna")
 
         if not data_frames:
             logger.warning("No data returned from yfinance")
             self.data = pd.DataFrame()
             return []
 
-        # Combine all successful fetches
         combined = pd.concat(data_frames, axis=1)
+        # Remove duplicate columns (same ticker in multiple batches shouldn't happen, safety net)
+        combined = combined.loc[:, ~combined.columns.duplicated()]
 
-        # Clean data: drop tickers with >10% missing data
+        # Drop tickers with >10% missing rows
         threshold = int(len(combined) * 0.9)
         combined = combined.dropna(axis=1, thresh=threshold)
-        
-        # Forward/backward fill remaining NAs
+
+        # Fill remaining gaps
         self.data = combined.ffill().bfill()
-        
-        # Preserve original ticker ordering (matches Colab behavior)
+
+        # Preserve original ticker ordering
         active = [s for s in self.tickers if s in self.data.columns]
         self.data = self.data[active]
         logger.info(f"Active tickers after cleaning: {len(active)} / {len(self.tickers)}")
