@@ -27,7 +27,7 @@ export interface PairResult {
     extreme_z_detail: string;
     profitable_since_extreme: string;
     pnl_since_extreme: number;
-    historical_z_scores: { time: string; value: number }[];
+    historical_z_scores: { time: number; value: number }[];
 }
 
 export interface TaskResult {

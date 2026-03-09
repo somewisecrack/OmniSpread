@@ -132,6 +132,9 @@ class OmniSpreadEngine:
         # Fill remaining gaps
         self.data = combined.ffill().bfill()
 
+        # Ensure index is sorted and strictly unique (important for intraday data)
+        self.data = self.data.loc[~self.data.index.duplicated(keep="last")].sort_index()
+
         # Preserve original ticker ordering
         active = [s for s in self.tickers if s in self.data.columns]
         self.data = self.data[active]
@@ -300,9 +303,14 @@ class OmniSpreadEngine:
         ret = spread - lag
         b = np.polyfit(lag, ret, 1)[0] if np.std(lag) > 0 else 0
         hl = max(1, int(round(-np.log(2) / b))) if b != 0 else 1
+        # Cap half-life to 1/3 of available data so the rolling window is meaningful.
+        # A huge hl (e.g. 500 bars on intraday data) would give a nearly constant mean
+        # and near-zero std, collapsing z-scores toward 0 and failing the abs(z)>2 filter.
+        max_hl = max(1, len(spread) // 3)
+        hl = min(hl, max_hl)
 
-        mavg = spread.rolling(window=hl).mean()
-        mstd = spread.rolling(window=hl).std()
+        mavg = spread.rolling(window=hl, min_periods=max(1, hl // 2)).mean()
+        mstd = spread.rolling(window=hl, min_periods=max(1, hl // 2)).std()
 
         z = round(float((spread.iloc[-1] - mavg.iloc[-1]) / mstd.iloc[-1]), 1) \
             if (mstd.iloc[-1] and not np.isnan(mstd.iloc[-1]) and mstd.iloc[-1] != 0) else np.nan
@@ -356,6 +364,8 @@ class OmniSpreadEngine:
         price_corr = item["price_corr"]
         return_corr = item["return_corr"]
         hl = item["half_life"]
+        # Cap half-life to 1/3 of spread length (same as screen_pair) so rolling windows are meaningful
+        hl = min(hl, max(1, len(spread) // 3))
 
         industry_x = item.get("industry_x", "Unknown")
         industry_y = item.get("industry_y", "Unknown")
@@ -439,8 +449,9 @@ class OmniSpreadEngine:
             p_high = round(float(np.percentile(p_draws_clean, 95)) * 100.0, 1)
 
         # --- Display metrics ---
-        mavg = spread.rolling(window=hl).mean()
-        mstd = spread.rolling(window=hl).std()
+        mp = max(1, hl // 2)
+        mavg = spread.rolling(window=hl, min_periods=mp).mean()
+        mstd = spread.rolling(window=hl, min_periods=mp).std()
         z_display = round(float(
             (spread.iloc[-1] - mavg.iloc[-1]) / (mstd.iloc[-1] if mstd.iloc[-1] != 0 else 1e-12)
         ), 1)
@@ -462,13 +473,23 @@ class OmniSpreadEngine:
             all_z = (spread - mavg) / mstd
             z_window = all_z.iloc[-hl:].dropna()
             
-            # Format for frontend chart: [{time: "YYYY-MM-DD", value: z}, ...]
+            # Format for frontend chart: [{time: unix_timestamp, value: z}, ...]
             for idx, val in all_z.dropna().items():
                 if math.isfinite(val):
                     historical_z_scores.append({
-                        "time": idx.strftime("%Y-%m-%d"),
+                        "time": int(idx.timestamp()),
                         "value": round(float(val), 2)
                     })
+            
+            # Ensure historical_z_scores are unique by timestamp and sorted
+            seen_times = set()
+            unique_z_scores = []
+            for item in historical_z_scores:
+                if item["time"] not in seen_times:
+                    unique_z_scores.append(item)
+                    seen_times.add(item["time"])
+            
+            historical_z_scores = sorted(unique_z_scores, key=lambda x: x["time"])
 
             if not z_window.empty:
                 current_z_unrounded = float(all_z.iloc[-1])
