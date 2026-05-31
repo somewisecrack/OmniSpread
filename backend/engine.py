@@ -314,12 +314,12 @@ class OmniSpreadEngine:
 
         qty = round(abs(float(beta_ts.iloc[-1])), 2)
 
-        direction = "short_x_long_y" if z > 0 else "long_x_short_y"
-
         if z > 0:
-            combo_str = f"Sell {qty} of {x_sym} ({px}, {ix})  &  Buy 1 of {y_sym} ({py}, {iy})"
-        else:
+            direction = "SHORT_SPREAD"
             combo_str = f"Buy {qty} of {x_sym} ({px}, {ix})  &  Sell 1 of {y_sym} ({py}, {iy})"
+        else:
+            direction = "LONG_SPREAD"
+            combo_str = f"Sell {qty} of {x_sym} ({px}, {ix})  &  Buy 1 of {y_sym} ({py}, {iy})"
 
         return {
             "x": x_sym, "y": y_sym,
@@ -505,7 +505,7 @@ class OmniSpreadEngine:
                         extremum_date = idxs[0]
                         spread_at_ext = float(spread.loc[extremum_date])
                         trade_sign_at_ext = -1 if extremum_z > 0 else 1
-                        hypothetical_pnl = -trade_sign_at_ext * (float(spread.iloc[-1]) - spread_at_ext)
+                        hypothetical_pnl = trade_sign_at_ext * (float(spread.iloc[-1]) - spread_at_ext)
                         pnl_since_extremum = round(hypothetical_pnl, 2)
                         is_profitable_since_extremum = "Yes" if hypothetical_pnl > 0 else "No"
 

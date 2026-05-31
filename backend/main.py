@@ -177,7 +177,7 @@ async def backtest_pair(request: BacktestRequest):
         x_price = float(row[request.x])
         y_price = float(row[request.y])
         spread = y_price - request.qty * x_price
-        if request.direction == "short_x_long_y":
+        if request.direction in {"LONG_SPREAD", "short_x_long_y"}:
             pnl_currency = -request.qty * (x_price - x0) + (y_price - y0)
         else:
             pnl_currency = request.qty * (x_price - x0) - (y_price - y0)

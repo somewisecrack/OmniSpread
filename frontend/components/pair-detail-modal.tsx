@@ -58,6 +58,13 @@ export default function PairDetailModal({ pair, onClose }: PairDetailModalProps)
 
     if (!pair) return null;
 
+    const xSymbol = pair.pair.split("/")[0];
+    const ySymbol = pair.pair.split("/")[1];
+    const signalText = pair.direction === "SHORT_SPREAD" || pair.direction === "long_x_short_y"
+        ? `Signal: Buy ${xSymbol} — Sell ${ySymbol}`
+        : `Signal: Sell ${xSymbol} — Buy ${ySymbol}`;
+    const isShortSpread = pair.direction === "SHORT_SPREAD" || pair.direction === "long_x_short_y";
+
     const stats = [
         { label: "Z-Score", value: `${pair.z_score > 0 ? "+" : ""}${pair.z_score}`, color: pair.z_score > 0 ? "var(--color-accent-red)" : "var(--color-accent-green)" },
         { label: "P(Profit)", value: `${pair.prob_profit}%`, sub: `${pair.prob_profit_low}–${pair.prob_profit_high}%`, color: "var(--color-accent-blue)" },
@@ -137,12 +144,12 @@ export default function PairDetailModal({ pair, onClose }: PairDetailModalProps)
                 {/* Signal */}
                 <div style={{
                     marginTop: "14px", padding: "10px 14px", borderRadius: "8px",
-                    background: pair.z_score > 0 ? "rgba(248, 113, 113, 0.08)" : "rgba(52, 211, 153, 0.08)",
-                    border: `1px solid ${pair.z_score > 0 ? "rgba(248,113,113,0.2)" : "rgba(52,211,153,0.2)"}`,
-                    fontSize: "12px", color: pair.z_score > 0 ? "var(--color-accent-red)" : "var(--color-accent-green)",
+                    background: isShortSpread ? "rgba(248, 113, 113, 0.08)" : "rgba(52, 211, 153, 0.08)",
+                    border: `1px solid ${isShortSpread ? "rgba(248,113,113,0.2)" : "rgba(52,211,153,0.2)"}`,
+                    fontSize: "12px", color: isShortSpread ? "var(--color-accent-red)" : "var(--color-accent-green)",
                     textAlign: "center", fontWeight: 600,
                 }}>
-                    Signal: {pair.z_score > 0 ? "Sell" : "Buy"} {pair.pair.split("/")[0]} — {pair.z_score > 0 ? "Buy" : "Sell"} {pair.pair.split("/")[1]}
+                    {signalText}
                 </div>
             </div>
         </div>
