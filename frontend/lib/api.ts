@@ -73,6 +73,7 @@ export interface BacktestResult {
     entry_time?: number;
     exit_time?: number;
     final_pnl_pct?: number;
+    max_profit_pct?: number;
     points?: BacktestPoint[];
     note?: string;
     error?: string;

@@ -189,6 +189,8 @@ async def backtest_pair(request: BacktestRequest):
             "pnl_pct": round(float(pnl_currency * 100.0 / unit), 4),
         })
 
+    max_profit_pct = max(row["pnl_pct"] for row in rows)
+
     return {
         "status": "completed",
         "pair": f"{request.x.replace('.NS','').replace('.BO','')}/{request.y.replace('.NS','').replace('.BO','')}",
@@ -201,6 +203,7 @@ async def backtest_pair(request: BacktestRequest):
         "entry_time": rows[0]["time"],
         "exit_time": rows[-1]["time"],
         "final_pnl_pct": rows[-1]["pnl_pct"],
+        "max_profit_pct": round(float(max_profit_pct), 4),
         "points": rows,
         "note": "Forward data may contain fewer bars than half-life if Yahoo has not published enough bars yet.",
     }

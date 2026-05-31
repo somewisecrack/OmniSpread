@@ -10,11 +10,12 @@ function formatTime(timestamp?: number) {
     return new Date(timestamp * 1000).toLocaleString();
 }
 
-function ChartPanel({ title, data, color, valueSuffix = "" }: {
+function ChartPanel({ title, data, color, valueSuffix = "", headerDetail }: {
     title: string;
     data: { time: UTCTimestamp; value: number }[];
     color: string;
     valueSuffix?: string;
+    headerDetail?: string;
 }) {
     const ref = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -59,12 +60,17 @@ function ChartPanel({ title, data, color, valueSuffix = "" }: {
     return (
         <section className="glow-border" style={{ borderRadius: "14px", background: "var(--color-bg-secondary)", padding: "18px" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
-                <h2 style={{ fontSize: "15px", fontWeight: 700 }}>{title}</h2>
-                {data.length > 0 && (
-                    <span style={{ fontFamily: "var(--font-mono)", color: "var(--color-text-secondary)", fontSize: "12px" }}>
-                        {data[data.length - 1].value.toFixed(valueSuffix ? 2 : 4)}{valueSuffix}
-                    </span>
-                )}
+                <div>
+                    <h2 style={{ fontSize: "15px", fontWeight: 700 }}>{title}</h2>
+                    {headerDetail && (
+                        <p style={{ color: "var(--color-text-muted)", fontSize: "11px", marginTop: "4px" }}>
+                            {headerDetail}
+                        </p>
+                    )}
+                </div>
+                <span style={{ fontFamily: "var(--font-mono)", color: "var(--color-text-secondary)", fontSize: "12px" }}>
+                    {data.length > 0 ? `${data[data.length - 1].value.toFixed(valueSuffix ? 2 : 4)}${valueSuffix}` : "N/A"}
+                </span>
             </div>
             <div ref={ref} />
         </section>
@@ -111,7 +117,10 @@ function BacktestContent() {
 
     const spreadData = (result?.points || []).map((point) => ({ time: point.time as UTCTimestamp, value: point.spread }));
     const pnlData = (result?.points || []).map((point) => ({ time: point.time as UTCTimestamp, value: point.pnl_pct }));
+    const xCloseData = (result?.points || []).map((point) => ({ time: point.time as UTCTimestamp, value: point.x }));
+    const yCloseData = (result?.points || []).map((point) => ({ time: point.time as UTCTimestamp, value: point.y }));
     const pnl = result?.final_pnl_pct ?? 0;
+    const maxProfit = result?.max_profit_pct ?? 0;
 
     return (
         <main style={{ maxWidth: "1120px", margin: "0 auto", padding: "36px 24px 72px" }}>
@@ -138,9 +147,8 @@ function BacktestContent() {
 
             {result && !loading && !error && (
                 <>
-                    <section className="glow-border" style={{
+                    <section className="glow-border backtest-summary-grid" style={{
                         display: "grid",
-                        gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
                         gap: "12px",
                         borderRadius: "14px",
                         padding: "16px",
@@ -149,9 +157,9 @@ function BacktestContent() {
                     }}>
                         {[
                             { label: "Actual PnL", value: `${pnl > 0 ? "+" : ""}${pnl.toFixed(2)}%`, color: pnl >= 0 ? "var(--color-accent-green)" : "var(--color-accent-red)" },
+                            { label: "Max Profit", value: `${maxProfit > 0 ? "+" : ""}${maxProfit.toFixed(2)}%`, color: maxProfit >= 0 ? "var(--color-accent-green)" : "var(--color-accent-red)" },
                             { label: "Half-Life", value: `${result.half_life} bars`, color: "var(--color-text-primary)" },
                             { label: "Interval", value: result.interval || request.interval, color: "var(--color-accent-cyan)" },
-                            { label: "Bars Loaded", value: `${result.points?.length || 0}`, color: "var(--color-text-primary)" },
                         ].map((item) => (
                             <div key={item.label} style={{ padding: "12px", borderRadius: "10px", background: "rgba(10,10,15,0.5)", border: "1px solid var(--color-border)" }}>
                                 <div style={{ fontSize: "10px", color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
@@ -169,8 +177,18 @@ function BacktestContent() {
                     </div>
 
                     <div style={{ display: "grid", gap: "18px" }}>
+                        <div className="backtest-close-grid" style={{ display: "grid", gap: "18px" }}>
+                            <ChartPanel title={`${result.x || request.x} Close`} data={xCloseData} color="#22d3ee" />
+                            <ChartPanel title={`${result.y || request.y} Close`} data={yCloseData} color="#a78bfa" />
+                        </div>
                         <ChartPanel title="Spread" data={spreadData} color="#6366f1" />
-                        <ChartPanel title="Actual PnL" data={pnlData} color={pnl >= 0 ? "#34d399" : "#f87171"} valueSuffix="%" />
+                        <ChartPanel
+                            title="Actual PnL"
+                            data={pnlData}
+                            color={pnl >= 0 ? "#34d399" : "#f87171"}
+                            valueSuffix="%"
+                            headerDetail={`Max profit during period: ${maxProfit > 0 ? "+" : ""}${maxProfit.toFixed(2)}%`}
+                        />
                     </div>
 
                     {result.note && (
