@@ -8,11 +8,12 @@ interface ResultsTableProps {
     isLoading: boolean;
     onRowClick: (pair: PairResult) => void;
     interval: string;
+    endDate: string;
 }
 
 type SortKey = keyof PairResult;
 
-export default function ResultsTable({ results, isLoading, onRowClick, interval }: ResultsTableProps) {
+export default function ResultsTable({ results, isLoading, onRowClick, interval, endDate }: ResultsTableProps) {
     const [sortKey, setSortKey] = useState<SortKey>("prob_profit");
     const [sortAsc, setSortAsc] = useState(false);
 
@@ -44,6 +45,21 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval 
             ? String(av).localeCompare(String(bv))
             : String(bv).localeCompare(String(av));
     });
+
+    const openBacktest = (pair: PairResult) => {
+        if (!endDate) return;
+        const params = new URLSearchParams({
+            x: pair.x,
+            y: pair.y,
+            qty: String(pair.qty),
+            direction: pair.direction,
+            interval,
+            half_life: String(pair.half_life),
+            end_date: endDate,
+            pair: pair.pair,
+        });
+        window.open(`/backtest?${params.toString()}`, "_blank", "noopener,noreferrer");
+    };
 
     const columns: { key: SortKey; label: string; width?: string }[] = [
         { key: "combo", label: "Trade" },
@@ -127,6 +143,9 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval 
                                     )}
                                 </th>
                             ))}
+                            <th style={{ padding: "12px 10px", textAlign: "center", fontSize: "10.5px", fontWeight: 600, color: "var(--color-text-secondary)", width: "86px", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                                Backtest
+                            </th>
                         </tr>
                     </thead>
                     <tbody>
@@ -275,6 +294,28 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval 
                                     color: res.same_sector === "Yes" ? "var(--color-accent-green)" : "var(--color-text-muted)",
                                 }}>
                                     {res.same_sector}
+                                </td>
+                                <td style={{ padding: "12px 10px", textAlign: "center" }}>
+                                    <button
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            openBacktest(res);
+                                        }}
+                                        disabled={!endDate}
+                                        title={endDate ? "Open forward half-life backtest" : "Backtest is available for custom scans with an end date"}
+                                        style={{
+                                            padding: "7px 10px",
+                                            borderRadius: "8px",
+                                            border: "1px solid var(--color-border)",
+                                            background: endDate ? "rgba(99, 102, 241, 0.16)" : "rgba(42, 42, 64, 0.35)",
+                                            color: endDate ? "var(--color-accent-cyan)" : "var(--color-text-muted)",
+                                            fontSize: "11px",
+                                            fontWeight: 700,
+                                            cursor: endDate ? "pointer" : "not-allowed",
+                                        }}
+                                    >
+                                        Backtest
+                                    </button>
                                 </td>
                             </tr>
                         ))}

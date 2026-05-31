@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { createChart, type IChartApi, LineSeries } from "lightweight-charts";
+import { createChart, type IChartApi, LineSeries, type UTCTimestamp } from "lightweight-charts";
 import { type PairResult } from "@/lib/api";
 
 interface PairDetailModalProps {
@@ -38,10 +38,10 @@ export default function PairDetailModal({ pair, onClose }: PairDetailModalProps)
         });
         chartRef.current = chart;
 
-        const data = pair.historical_z_scores.map(item => ({ time: item.time, value: item.value }));
-        const upperBand = pair.historical_z_scores.map(item => ({ time: item.time, value: 2 }));
-        const lowerBand = pair.historical_z_scores.map(item => ({ time: item.time, value: -2 }));
-        const meanLine = pair.historical_z_scores.map(item => ({ time: item.time, value: 0 }));
+        const data = pair.historical_z_scores.map(item => ({ time: item.time as UTCTimestamp, value: item.value }));
+        const upperBand = pair.historical_z_scores.map(item => ({ time: item.time as UTCTimestamp, value: 2 }));
+        const lowerBand = pair.historical_z_scores.map(item => ({ time: item.time as UTCTimestamp, value: -2 }));
+        const meanLine = pair.historical_z_scores.map(item => ({ time: item.time as UTCTimestamp, value: 0 }));
 
         chart.addSeries(LineSeries, { color: "#6366f1", lineWidth: 2 }).setData(data);
         chart.addSeries(LineSeries, { color: "#f87171", lineWidth: 1, lineStyle: 2 }).setData(upperBand);

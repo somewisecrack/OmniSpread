@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api/backend";
 
 export interface ScanRequest {
     tickers: string[];
@@ -10,6 +10,10 @@ export interface ScanRequest {
 
 export interface PairResult {
     pair: string;
+    x: string;
+    y: string;
+    qty: number;
+    direction: string;
     combo: string;
     method: string;
     price_corr: number;
@@ -39,6 +43,41 @@ export interface TaskResult {
 
 export type Presets = Record<string, string[]>;
 
+export interface BacktestRequest {
+    x: string;
+    y: string;
+    qty: number;
+    direction: string;
+    interval: string;
+    half_life: number;
+    end_date: string;
+}
+
+export interface BacktestPoint {
+    time: number;
+    x: number;
+    y: number;
+    spread: number;
+    pnl_pct: number;
+}
+
+export interface BacktestResult {
+    status: "completed" | "failed";
+    pair?: string;
+    x?: string;
+    y?: string;
+    qty?: number;
+    direction?: string;
+    interval?: string;
+    half_life?: number;
+    entry_time?: number;
+    exit_time?: number;
+    final_pnl_pct?: number;
+    points?: BacktestPoint[];
+    note?: string;
+    error?: string;
+}
+
 export async function startScan(request: ScanRequest): Promise<{ task_id: string }> {
     const res = await fetch(`${API_BASE}/scan`, {
         method: "POST",
@@ -58,6 +97,16 @@ export async function getResults(taskId: string): Promise<TaskResult> {
 export async function getPresets(): Promise<Presets> {
     const res = await fetch(`${API_BASE}/presets`);
     if (!res.ok) throw new Error(`Presets fetch failed: ${res.statusText}`);
+    return res.json();
+}
+
+export async function runBacktest(request: BacktestRequest): Promise<BacktestResult> {
+    const res = await fetch(`${API_BASE}/backtest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+    });
+    if (!res.ok) throw new Error(`Backtest request failed: ${res.statusText}`);
     return res.json();
 }
 

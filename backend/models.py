@@ -10,8 +10,22 @@ class ScanRequest(BaseModel):
     end_date: Optional[str] = None
 
 
+class BacktestRequest(BaseModel):
+    x: str
+    y: str
+    qty: float
+    direction: str
+    interval: str = "1d"
+    half_life: int
+    end_date: str
+
+
 class PairResult(BaseModel):
     pair: str
+    x: str = ""
+    y: str = ""
+    qty: float = 0.0
+    direction: str = ""
     combo: str
     method: str
     price_corr: float

@@ -125,14 +125,11 @@ class OmniSpreadEngine:
         # Remove duplicate columns (same ticker in multiple batches shouldn't happen, safety net)
         combined = combined.loc[:, ~combined.columns.duplicated()]
 
-        # Drop tickers with >10% missing rows
-        threshold = int(len(combined) * 0.9)
-        combined = combined.dropna(axis=1, thresh=threshold)
+        # Match the source notebook: keep downloaded columns as-is and let each
+        # pair drop missing rows locally before testing.
+        self.data = combined
 
-        # Fill remaining gaps
-        self.data = combined.ffill().bfill()
-
-        # Ensure index is sorted and strictly unique (important for intraday data)
+        # Ensure index is sorted and strictly unique.
         self.data = self.data.loc[~self.data.index.duplicated(keep="last")].sort_index()
 
         # Preserve original ticker ordering
@@ -163,8 +160,6 @@ class OmniSpreadEngine:
         max_lag = min(100, len(ts) - 1)
         lags = range(2, max_lag + 1)
         tau = [np.std(ts[lag:] - ts[:-lag]) for lag in lags]
-        if any(t == 0 for t in tau):
-            return np.nan
         return np.polyfit(np.log(list(lags)), np.log(tau), 1)[0] * 2.0
 
     @staticmethod
@@ -303,19 +298,13 @@ class OmniSpreadEngine:
         ret = spread - lag
         b = np.polyfit(lag, ret, 1)[0] if np.std(lag) > 0 else 0
         hl = max(1, int(round(-np.log(2) / b))) if b != 0 else 1
-        # Cap half-life to 1/3 of available data so the rolling window is meaningful.
-        # A huge hl (e.g. 500 bars on intraday data) would give a nearly constant mean
-        # and near-zero std, collapsing z-scores toward 0 and failing the abs(z)>2 filter.
-        max_hl = max(1, len(spread) // 3)
-        hl = min(hl, max_hl)
-
-        mavg = spread.rolling(window=hl, min_periods=max(1, hl // 2)).mean()
-        mstd = spread.rolling(window=hl, min_periods=max(1, hl // 2)).std()
+        mavg = spread.rolling(window=hl).mean()
+        mstd = spread.rolling(window=hl).std()
 
         z = round(float((spread.iloc[-1] - mavg.iloc[-1]) / mstd.iloc[-1]), 1) \
             if (mstd.iloc[-1] and not np.isnan(mstd.iloc[-1]) and mstd.iloc[-1] != 0) else np.nan
 
-        hurst_val = self.hurst(spread.values)
+        hurst_val = round(self.hurst(spread.values), 2)
 
         # --- Filter (matches Colab: abs(z) > limit AND hurst < limit) ---
         if not math.isfinite(z) or abs(z) <= self.Z_SCORE_LIMIT:
@@ -325,24 +314,23 @@ class OmniSpreadEngine:
 
         qty = round(abs(float(beta_ts.iloc[-1])), 2)
 
-        # Strip .NS/.BO suffixes for cleaner display
-        x_disp = x_sym.replace(".NS", "").replace(".BO", "")
-        y_disp = y_sym.replace(".NS", "").replace(".BO", "")
+        direction = "short_x_long_y" if z > 0 else "long_x_short_y"
 
         if z > 0:
-            combo_str = f"Sell {qty} of {x_disp} ({px}, {ix})  &  Buy 1 of {y_disp} ({py}, {iy})"
+            combo_str = f"Sell {qty} of {x_sym} ({px}, {ix})  &  Buy 1 of {y_sym} ({py}, {iy})"
         else:
-            combo_str = f"Buy {qty} of {x_disp} ({px}, {ix})  &  Sell 1 of {y_disp} ({py}, {iy})"
+            combo_str = f"Buy {qty} of {x_sym} ({px}, {ix})  &  Sell 1 of {y_sym} ({py}, {iy})"
 
         return {
             "x": x_sym, "y": y_sym,
+            "qty": qty,
+            "direction": direction,
             "method": pass_method,
             "cadf_pass": cadf_pass, "johansen_pass": johansen_pass,
             "price_corr": price_corr, "return_corr": return_corr,
             "px": px, "py": py,
             "combo_str": combo_str,
             "beta_ts": beta_ts, "spread": spread,
-            "half_life": hl,
             "industry_x": ix, "industry_y": iy,
         }
 
@@ -357,15 +345,20 @@ class OmniSpreadEngine:
         """
         x, y = item["x"], item["y"]
         px, py = item["px"], item["py"]
+        qty = item["qty"]
+        direction = item["direction"]
         spread = item["spread"]
         beta_ts = item["beta_ts"]
         combo_str = item["combo_str"]
         method = item["method"]
         price_corr = item["price_corr"]
         return_corr = item["return_corr"]
-        hl = item["half_life"]
-        # Cap half-life to 1/3 of spread length (same as screen_pair) so rolling windows are meaningful
-        hl = min(hl, max(1, len(spread) // 3))
+        hl = item.get("half_life")
+        if hl is None:
+            lag_tmp = spread.shift(1).bfill()
+            ret_tmp = spread - lag_tmp
+            b_tmp = np.polyfit(lag_tmp, ret_tmp, 1)[0] if np.std(lag_tmp) > 0 else 0
+            hl = max(1, int(round(-np.log(2) / b_tmp))) if b_tmp != 0 else 1
 
         industry_x = item.get("industry_x", "Unknown")
         industry_y = item.get("industry_y", "Unknown")
@@ -449,9 +442,8 @@ class OmniSpreadEngine:
             p_high = round(float(np.percentile(p_draws_clean, 95)) * 100.0, 1)
 
         # --- Display metrics ---
-        mp = max(1, hl // 2)
-        mavg = spread.rolling(window=hl, min_periods=mp).mean()
-        mstd = spread.rolling(window=hl, min_periods=mp).std()
+        mavg = spread.rolling(window=hl).mean()
+        mstd = spread.rolling(window=hl).std()
         z_display = round(float(
             (spread.iloc[-1] - mavg.iloc[-1]) / (mstd.iloc[-1] if mstd.iloc[-1] != 0 else 1e-12)
         ), 1)
@@ -519,6 +511,10 @@ class OmniSpreadEngine:
 
         return {
             "pair": f"{x.replace('.NS','').replace('.BO','')}/{y.replace('.NS','').replace('.BO','')}",
+            "x": x,
+            "y": y,
+            "qty": self._safe_float(qty),
+            "direction": direction,
             "combo": combo_str,
             "method": method,
             "price_corr": self._safe_float(price_corr),
