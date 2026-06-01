@@ -60,6 +60,7 @@ class OmniSpreadEngine:
             "interval": self.interval,
             "auto_adjust": False,
             "progress": False,
+            "threads": False,
         }
         if self.start_date and self.end_date:
             base_kwargs.update({"start": self.start_date, "end": self.end_date})

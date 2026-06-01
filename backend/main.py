@@ -157,6 +157,7 @@ async def backtest_pair(request: BacktestRequest):
         interval=request.interval,
         auto_adjust=False,
         progress=False,
+        threads=False,
     )
     prices = _close_frame(raw, tickers)
     if prices.empty or len(prices) < 2:
