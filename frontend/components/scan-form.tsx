@@ -29,6 +29,9 @@ const DAILY_OPTIONS = ["1d"];
 const normalizeDate = (date: Date) =>
     new Date(date.getFullYear(), date.getMonth(), date.getDate());
 
+const formatLocalDate = (date: Date) =>
+    `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
 const getDateSpanDays = (start: Date | null, end: Date | null) => {
     if (!start || !end) return null;
     const startTime = normalizeDate(start).getTime();
@@ -142,8 +145,8 @@ export default function ScanForm({ onScan, onReset, isScanning }: ScanFormProps)
     const handleScan = () => {
         const tickers = parseTickers(tickerInput);
         if (tickers.length >= 2) {
-            const startStr = startDate ? startDate.toISOString().split("T")[0] : undefined;
-            const endStr = endDate ? endDate.toISOString().split("T")[0] : undefined;
+            const startStr = startDate ? formatLocalDate(startDate) : undefined;
+            const endStr = endDate ? formatLocalDate(endDate) : undefined;
 
             let finalInterval = interval;
             if (period !== "60d" && period !== "6mo" && period !== "1y" && period !== "custom") {
@@ -390,18 +393,19 @@ export default function ScanForm({ onScan, onReset, isScanning }: ScanFormProps)
                         onClick={handleReset}
                         disabled={isScanning}
                         style={{
-                            padding: "12px 24px",
+                            padding: "16px 32px",
                             borderRadius: "10px",
-                            border: "1px solid var(--color-border)",
-                            fontSize: "14px",
-                            fontWeight: 600,
+                            border: "none",
+                            fontSize: "16px",
+                            fontWeight: 700,
                             cursor: isScanning ? "not-allowed" : "pointer",
-                            background: "transparent",
-                            color: "var(--color-text-secondary)",
+                            background: "linear-gradient(135deg, #ef4444, #dc2626)",
+                            color: "#ffffff",
                             transition: "all 0.2s",
+                            boxShadow: "0 4px 14px 0 rgba(239, 68, 68, 0.39)",
                         }}
                     >
-                        Reset
+                        RESET
                     </button>
                     <button
                         onClick={handleScan}

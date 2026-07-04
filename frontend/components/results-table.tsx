@@ -1,6 +1,6 @@
 "use client";
 
-import { type PairResult } from "@/lib/api";
+import { type BacktestStrategy, type PairResult } from "@/lib/api";
 import { useState } from "react";
 
 interface ResultsTableProps {
@@ -16,14 +16,15 @@ type SortKey = keyof PairResult;
 export default function ResultsTable({ results, isLoading, onRowClick, interval, endDate }: ResultsTableProps) {
     const [sortKey, setSortKey] = useState<SortKey>("prob_profit");
     const [sortAsc, setSortAsc] = useState(false);
+    const [backtestPair, setBacktestPair] = useState<PairResult | null>(null);
 
     const formatHalfLife = (hl: number, interval: string) => {
-        if (interval === "1h") return `${hl}h`;
-        if (interval === "15m") return `${(hl * 15) / 60}h`;
-        if (interval === "30m") return `${(hl * 30) / 60}h`;
-        if (interval === "60m") return `${(hl * 60) / 60}h`;
-        if (interval === "1d") return `${hl}d`;
-        return `${hl}`;
+        if (interval === "1h") return `${hl.toFixed(2)}h`;
+        if (interval === "15m") return `${((hl * 15) / 60).toFixed(2)}h`;
+        if (interval === "30m") return `${((hl * 30) / 60).toFixed(2)}h`;
+        if (interval === "60m") return `${((hl * 60) / 60).toFixed(2)}h`;
+        if (interval === "1d") return `${hl.toFixed(2)}d`;
+        return `${hl.toFixed(2)}`;
     };
 
     const handleSort = (key: SortKey) => {
@@ -46,7 +47,7 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
             : String(bv).localeCompare(String(av));
     });
 
-    const openBacktest = (pair: PairResult) => {
+    const openBacktest = (pair: PairResult, strategy: BacktestStrategy) => {
         if (!endDate) return;
         const params = new URLSearchParams({
             x: pair.x,
@@ -57,8 +58,10 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
             half_life: String(pair.half_life),
             end_date: endDate,
             pair: pair.pair,
+            strategy,
         });
         window.open(`/backtest?${params.toString()}`, "_blank", "noopener,noreferrer");
+        setBacktestPair(null);
     };
 
     const columns: { key: SortKey; label: string; width?: string }[] = [
@@ -197,7 +200,7 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
                                     fontSize: "12px",
                                     color: res.z_score > 0 ? "var(--color-accent-red)" : "var(--color-accent-green)",
                                 }}>
-                                    {res.z_score > 0 ? "+" : ""}{res.z_score}
+                                    {res.z_score > 0 ? "+" : ""}{res.z_score.toFixed(2)}
                                 </td>
                                 {/* P(Profit) with CI */}
                                 <td style={{ padding: "12px 10px", textAlign: "center" }}>
@@ -231,11 +234,11 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
                                                     ? "var(--color-accent-blue)"
                                                     : "var(--color-accent-yellow)",
                                         }}>
-                                            {res.prob_profit}%
+                                            {res.prob_profit.toFixed(2)}%
                                         </span>
                                     </div>
                                     <div style={{ fontSize: "9.5px", color: "var(--color-text-muted)", marginTop: "2px" }}>
-                                        {res.prob_profit_low}–{res.prob_profit_high}%
+                                        {res.prob_profit_low.toFixed(2)}–{res.prob_profit_high.toFixed(2)}%
                                     </div>
                                 </td>
                                 {/* Half-Life */}
@@ -263,7 +266,7 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
                                     fontSize: "12px",
                                     color: "var(--color-accent-yellow)",
                                 }}>
-                                    {res.exp_return}%
+                                    {res.exp_return.toFixed(2)}%
                                 </td>
                                 {/* Move to Mean */}
                                 <td style={{
@@ -273,7 +276,7 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
                                     fontSize: "11.5px",
                                     color: "var(--color-text-secondary)",
                                 }}>
-                                    {res.move_to_mean}
+                                    {res.move_to_mean.toFixed(2)}
                                 </td>
 
                                 {/* Extreme Z in HL */}
@@ -299,7 +302,7 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
                                     <button
                                         onClick={(event) => {
                                             event.stopPropagation();
-                                            openBacktest(res);
+                                            setBacktestPair(res);
                                         }}
                                         disabled={!endDate}
                                         title={endDate ? "Open forward half-life backtest" : "Backtest is available for custom scans with an end date"}
@@ -322,6 +325,59 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
                     </tbody>
                 </table>
             </div>
+            {backtestPair && (
+                <div
+                    onClick={() => setBacktestPair(null)}
+                    style={{
+                        position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.72)",
+                        backdropFilter: "blur(8px)", display: "flex", alignItems: "center",
+                        justifyContent: "center", padding: "20px",
+                    }}
+                >
+                    <div
+                        onClick={(event) => event.stopPropagation()}
+                        className="glow-border"
+                        style={{
+                            width: "100%", maxWidth: "520px", padding: "24px", borderRadius: "16px",
+                            background: "var(--color-bg-secondary)",
+                        }}
+                    >
+                        <h2 style={{ fontSize: "18px", fontWeight: 800 }}>Choose backtest structure</h2>
+                        <p style={{ marginTop: "5px", color: "var(--color-text-muted)", fontSize: "12px" }}>
+                            {backtestPair.pair} • {interval === "1d" ? "Daily data" : "Intraday scan"}
+                        </p>
+                        <div style={{ display: "grid", gap: "10px", marginTop: "18px" }}>
+                            {([
+                                ["equity", "Equities only", "Original cash-equity pair"],
+                                ["futures", "Futures only", "Nearest eligible monthly futures"],
+                                ["futures_options", "Futures + option buy", "Future with a 2% OTM protective option"],
+                                ["credit_spreads", "Credit spreads", "Bull put / bear call spreads with three-strike hedges"],
+                            ] as [BacktestStrategy, string, string][]).map(([value, label, detail]) => {
+                                const disabled = value !== "equity" && interval !== "1d";
+                                return (
+                                    <button
+                                        key={value}
+                                        disabled={disabled}
+                                        onClick={() => openBacktest(backtestPair, value)}
+                                        style={{
+                                            padding: "13px 15px", borderRadius: "10px", textAlign: "left",
+                                            border: "1px solid var(--color-border)",
+                                            background: disabled ? "rgba(42,42,64,0.25)" : "rgba(99,102,241,0.10)",
+                                            color: disabled ? "var(--color-text-muted)" : "var(--color-text-primary)",
+                                            cursor: disabled ? "not-allowed" : "pointer",
+                                        }}
+                                    >
+                                        <div style={{ fontSize: "13px", fontWeight: 700 }}>{label}</div>
+                                        <div style={{ fontSize: "11px", color: "var(--color-text-muted)", marginTop: "3px" }}>
+                                            {disabled ? "Unavailable for intraday scans" : detail}
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

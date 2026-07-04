@@ -10,12 +10,13 @@ function formatTime(timestamp?: number) {
     return new Date(timestamp * 1000).toLocaleString();
 }
 
-function ChartPanel({ title, data, color, valueSuffix = "", headerDetail }: {
+function ChartPanel({ title, data, color, valueSuffix = "", headerDetail, markerPoint }: {
     title: string;
     data: { time: UTCTimestamp; value: number }[];
     color: string;
     valueSuffix?: string;
     headerDetail?: string;
+    markerPoint?: { time: UTCTimestamp; value: number };
 }) {
     const ref = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -44,6 +45,16 @@ function ChartPanel({ title, data, color, valueSuffix = "", headerDetail }: {
             lineWidth: 2,
             priceFormat: { type: "price", precision: valueSuffix ? 2 : 4, minMove: valueSuffix ? 0.01 : 0.0001 },
         }).setData(data);
+        if (markerPoint) {
+            chart.addSeries(LineSeries, {
+                color: "#f59e0b",
+                lineVisible: false,
+                pointMarkersVisible: true,
+                pointMarkersRadius: 6,
+                priceLineVisible: false,
+                lastValueVisible: false,
+            }).setData([markerPoint]);
+        }
         chart.timeScale().fitContent();
 
         const handleResize = () => {
@@ -55,7 +66,7 @@ function ChartPanel({ title, data, color, valueSuffix = "", headerDetail }: {
             chart.remove();
             chartRef.current = null;
         };
-    }, [data, color, valueSuffix]);
+    }, [data, color, valueSuffix, markerPoint]);
 
     return (
         <section className="glow-border" style={{ borderRadius: "14px", background: "var(--color-bg-secondary)", padding: "18px" }}>
@@ -69,7 +80,9 @@ function ChartPanel({ title, data, color, valueSuffix = "", headerDetail }: {
                     )}
                 </div>
                 <span style={{ fontFamily: "var(--font-mono)", color: "var(--color-text-secondary)", fontSize: "12px" }}>
-                    {data.length > 0 ? `${data[data.length - 1].value.toFixed(valueSuffix ? 2 : 4)}${valueSuffix}` : "N/A"}
+                    {data.length > 0 && Number.isFinite(data[data.length - 1]?.value)
+                        ? `${data[data.length - 1].value.toFixed(valueSuffix ? 2 : 4)}${valueSuffix}`
+                        : "N/A"}
                 </span>
             </div>
             <div ref={ref} />
@@ -91,6 +104,7 @@ function BacktestContent() {
         interval: params.get("interval") || "1d",
         half_life: Number(params.get("half_life") || "0"),
         end_date: params.get("end_date") || "",
+        strategy: (params.get("strategy") || "equity") as "equity" | "futures" | "futures_options" | "credit_spreads",
     }), [params]);
 
     useEffect(() => {
@@ -115,12 +129,22 @@ function BacktestContent() {
         load();
     }, [request]);
 
-    const spreadData = (result?.points || []).map((point) => ({ time: point.time as UTCTimestamp, value: point.spread }));
-    const pnlData = (result?.points || []).map((point) => ({ time: point.time as UTCTimestamp, value: point.pnl_pct }));
-    const xCloseData = (result?.points || []).map((point) => ({ time: point.time as UTCTimestamp, value: point.x }));
-    const yCloseData = (result?.points || []).map((point) => ({ time: point.time as UTCTimestamp, value: point.y }));
-    const pnl = result?.final_pnl_pct ?? 0;
-    const maxProfit = result?.max_profit_pct ?? 0;
+    const spreadData = (result?.points || []).filter((point) => point.spread !== undefined).map((point) => ({ time: point.time as UTCTimestamp, value: point.spread! }));
+    const pnlData = (result?.points || [])
+        .map((point) => ({ time: point.time as UTCTimestamp, value: point.pnl ?? point.pnl_pct }))
+        .filter((point): point is { time: UTCTimestamp; value: number } => Number.isFinite(point.value));
+    const xCloseData = (result?.points || []).filter((point) => point.x !== undefined).map((point) => ({ time: point.time as UTCTimestamp, value: point.x! }));
+    const yCloseData = (result?.points || []).filter((point) => point.y !== undefined).map((point) => ({ time: point.time as UTCTimestamp, value: point.y! }));
+    const pnl = result?.final_pnl ?? result?.final_pnl_pct ?? 0;
+    const maxProfit = result?.max_profit ?? result?.max_profit_pct ?? 0;
+    const expiryPnl = result?.expiry_pnl;
+    const isDerivative = (result?.strategy || request.strategy) !== "equity";
+    const strategyLabels = {
+        equity: "Equities only",
+        futures: "Futures only",
+        futures_options: "Futures + option buy",
+        credit_spreads: "Credit spreads",
+    };
 
     return (
         <main style={{ maxWidth: "1120px", margin: "0 auto", padding: "36px 24px 72px" }}>
@@ -156,10 +180,15 @@ function BacktestContent() {
                         marginBottom: "18px",
                     }}>
                         {[
-                            { label: "Actual PnL", value: `${pnl > 0 ? "+" : ""}${pnl.toFixed(2)}%`, color: pnl >= 0 ? "var(--color-accent-green)" : "var(--color-accent-red)" },
-                            { label: "Max Profit", value: `${maxProfit > 0 ? "+" : ""}${maxProfit.toFixed(2)}%`, color: maxProfit >= 0 ? "var(--color-accent-green)" : "var(--color-accent-red)" },
+                            { label: isDerivative ? "Half-Life PnL" : "Actual PnL", value: `${pnl > 0 ? "+" : ""}₹${pnl.toFixed(2)}`, color: pnl >= 0 ? "var(--color-accent-green)" : "var(--color-accent-red)" },
+                            { label: "Max Profit", value: `${maxProfit > 0 ? "+" : ""}₹${maxProfit.toFixed(2)}`, color: maxProfit >= 0 ? "var(--color-accent-green)" : "var(--color-accent-red)" },
+                            ...(isDerivative && expiryPnl !== undefined ? [{
+                                label: "PnL at Expiry",
+                                value: `${expiryPnl > 0 ? "+" : ""}₹${expiryPnl.toFixed(2)}`,
+                                color: expiryPnl >= 0 ? "var(--color-accent-green)" : "var(--color-accent-red)",
+                            }] : []),
                             { label: "Half-Life", value: `${result.half_life} bars`, color: "var(--color-text-primary)" },
-                            { label: "Interval", value: result.interval || request.interval, color: "var(--color-accent-cyan)" },
+                            { label: "Structure", value: strategyLabels[result.strategy || request.strategy], color: "var(--color-accent-cyan)" },
                         ].map((item) => (
                             <div key={item.label} style={{ padding: "12px", borderRadius: "10px", background: "rgba(10,10,15,0.5)", border: "1px solid var(--color-border)" }}>
                                 <div style={{ fontSize: "10px", color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "6px" }}>
@@ -173,21 +202,49 @@ function BacktestContent() {
                     </section>
 
                     <div style={{ color: "var(--color-text-muted)", fontSize: "12px", marginBottom: "18px" }}>
-                        Entry: {formatTime(result.entry_time)} • Last bar: {formatTime(result.exit_time)}
+                        Entry: {formatTime(result.entry_time)} • Half-life exit: {formatTime(result.exit_time)}
+                        {result.expiry_time ? ` • Contract expiry: ${formatTime(result.expiry_time)}` : ""}
                     </div>
 
+                    {result.legs && result.legs.length > 0 && (
+                        <section className="glow-border" style={{ borderRadius: "14px", padding: "16px", background: "var(--color-bg-secondary)", marginBottom: "18px" }}>
+                            <h2 style={{ fontSize: "14px", fontWeight: 700, marginBottom: "10px" }}>
+                                Selected contracts
+                            </h2>
+                            <div style={{ display: "grid", gap: "7px" }}>
+                                {result.legs.map((leg, index) => (
+                                    <div key={`${leg.asset}-${leg.instrument}-${leg.side}-${index}`} style={{ fontFamily: "var(--font-mono)", fontSize: "11px", color: "var(--color-text-secondary)" }}>
+                                        <strong style={{ color: leg.side === "BUY" ? "var(--color-accent-green)" : "var(--color-accent-red)" }}>{leg.side}</strong>
+                                        {" "}{leg.lots} lot{leg.lots === 1 ? "" : "s"} × {leg.lot_size} {leg.symbol} {leg.expiry} {leg.strike ? `${leg.strike} ` : ""}{leg.instrument}
+                                    </div>
+                                ))}
+                            </div>
+                        </section>
+                    )}
+
                     <div style={{ display: "grid", gap: "18px" }}>
-                        <div className="backtest-close-grid" style={{ display: "grid", gap: "18px" }}>
-                            <ChartPanel title={`${result.x || request.x} Close`} data={xCloseData} color="#22d3ee" />
-                            <ChartPanel title={`${result.y || request.y} Close`} data={yCloseData} color="#a78bfa" />
-                        </div>
-                        <ChartPanel title="Spread" data={spreadData} color="#6366f1" />
+                        {xCloseData.length > 0 && yCloseData.length > 0 && (
+                            <div className="backtest-close-grid" style={{ display: "grid", gap: "18px" }}>
+                                <ChartPanel title={`${result.x || request.x} Close`} data={xCloseData} color="#22d3ee" />
+                                <ChartPanel title={`${result.y || request.y} Close`} data={yCloseData} color="#a78bfa" />
+                            </div>
+                        )}
+                        {spreadData.length > 0 && <ChartPanel title="Spread" data={spreadData} color="#6366f1" />}
                         <ChartPanel
-                            title="Actual PnL"
+                            title="Absolute PnL"
                             data={pnlData}
                             color={pnl >= 0 ? "#34d399" : "#f87171"}
-                            valueSuffix="%"
-                            headerDetail={`Max profit during period: ${maxProfit > 0 ? "+" : ""}${maxProfit.toFixed(2)}%`}
+                            valueSuffix="₹"
+                            headerDetail={
+                                isDerivative && expiryPnl !== undefined
+                                    ? `Half-life max: ${maxProfit > 0 ? "+" : ""}₹${maxProfit.toFixed(2)} • Amber point marks expiry: ${expiryPnl > 0 ? "+" : ""}₹${expiryPnl.toFixed(2)}`
+                                    : `Max profit during period: ${maxProfit > 0 ? "+" : ""}₹${maxProfit.toFixed(2)}`
+                            }
+                            markerPoint={
+                                result.expiry_time && expiryPnl !== undefined
+                                    ? { time: result.expiry_time as UTCTimestamp, value: expiryPnl }
+                                    : undefined
+                            }
                         />
                     </div>
 

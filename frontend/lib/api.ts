@@ -51,14 +51,30 @@ export interface BacktestRequest {
     interval: string;
     half_life: number;
     end_date: string;
+    strategy: BacktestStrategy;
 }
+
+export type BacktestStrategy = "equity" | "futures" | "futures_options" | "credit_spreads";
 
 export interface BacktestPoint {
     time: number;
-    x: number;
-    y: number;
-    spread: number;
-    pnl_pct: number;
+    x?: number;
+    y?: number;
+    spread?: number;
+    pnl: number;
+    pnl_pct?: number;
+    legs?: Record<string, number>;
+}
+
+export interface BacktestLeg {
+    asset: "x" | "y";
+    symbol: string;
+    instrument: string;
+    side: "BUY" | "SELL";
+    lots: number;
+    lot_size: number;
+    strike?: number;
+    expiry: string;
 }
 
 export interface BacktestResult {
@@ -68,13 +84,21 @@ export interface BacktestResult {
     y?: string;
     qty?: number;
     direction?: string;
+    strategy?: BacktestStrategy;
     interval?: string;
     half_life?: number;
     entry_time?: number;
     exit_time?: number;
+    final_pnl?: number;
+    max_profit?: number;
     final_pnl_pct?: number;
     max_profit_pct?: number;
+    expiry_time?: number;
+    expiry_pnl?: number;
     points?: BacktestPoint[];
+    legs?: BacktestLeg[];
+    x_lots?: number;
+    y_lots?: number;
     note?: string;
     error?: string;
 }

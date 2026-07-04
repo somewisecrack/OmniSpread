@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Literal, Optional
 
 
 class ScanRequest(BaseModel):
@@ -18,6 +18,7 @@ class BacktestRequest(BaseModel):
     interval: str = "1d"
     half_life: int
     end_date: str
+    strategy: Literal["equity", "futures", "futures_options", "credit_spreads"] = "equity"
 
 
 class PairResult(BaseModel):

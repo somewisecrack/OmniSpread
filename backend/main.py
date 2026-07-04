@@ -8,6 +8,7 @@ import yfinance as yf
 
 from models import BacktestRequest, ScanRequest, TaskResponse
 from engine import OmniSpreadEngine
+from derivatives_backtest import run_derivatives_backtest
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("OmniSpreadAPI")
@@ -146,6 +147,54 @@ async def backtest_pair(request: BacktestRequest):
     if request.half_life < 1:
         return {"status": "failed", "error": "Half-life must be at least 1 bar"}
 
+    if request.strategy != "equity":
+        if request.interval != "1d":
+            return {
+                "status": "failed",
+                "error": "Futures and options backtests are available only for daily scans.",
+            }
+        try:
+            from nselib import derivatives
+
+            result = run_derivatives_backtest(
+                x=request.x,
+                y=request.y,
+                qty=request.qty,
+                direction=request.direction,
+                half_life=request.half_life,
+                end_date=request.end_date,
+                strategy=request.strategy,
+                fetch_future=derivatives.future_price_volume_data,
+                fetch_option=derivatives.option_price_volume_data,
+            )
+        except Exception as exc:
+            logger.exception("Derivatives backtest failed")
+            return {"status": "failed", "error": str(exc)}
+
+        rows = result["points"]
+        return {
+            "status": "completed",
+            "pair": f"{request.x.replace('.NS','')}/{request.y.replace('.NS','')}",
+            "x": request.x,
+            "y": request.y,
+            "qty": request.qty,
+            "direction": request.direction,
+            "strategy": request.strategy,
+            "interval": "1d",
+            "half_life": request.half_life,
+            "entry_time": rows[0]["time"],
+            "exit_time": result["half_life_time"],
+            "final_pnl": result["half_life_pnl"],
+            "max_profit": result["half_life_max_profit"],
+            "expiry_time": result["expiry_time"],
+            "expiry_pnl": result["expiry_pnl"],
+            "points": rows,
+            "legs": result["legs"],
+            "x_lots": result["x_lots"],
+            "y_lots": result["y_lots"],
+            "note": "Daily NSE closing prices; excludes brokerage, taxes, slippage, margin and financing costs.",
+        }
+
     start = datetime.strptime(request.end_date, "%Y-%m-%d")
     end = start + timedelta(days=_backtest_calendar_days(request.interval, request.half_life))
     tickers = [request.x, request.y]
@@ -169,10 +218,6 @@ async def backtest_pair(request: BacktestRequest):
     prices = prices.iloc[: request.half_life + 1]
     x0 = float(prices[request.x].iloc[0])
     y0 = float(prices[request.y].iloc[0])
-    unit = abs(request.qty * x0) + abs(y0)
-    if unit == 0:
-        return {"status": "failed", "error": "Unable to compute PnL because entry unit value is zero."}
-
     rows = []
     for idx, row in prices.iterrows():
         x_price = float(row[request.x])
@@ -187,10 +232,10 @@ async def backtest_pair(request: BacktestRequest):
             "x": round(x_price, 4),
             "y": round(y_price, 4),
             "spread": round(spread, 4),
-            "pnl_pct": round(float(pnl_currency * 100.0 / unit), 4),
+            "pnl": round(float(pnl_currency), 4),
         })
 
-    max_profit_pct = max(row["pnl_pct"] for row in rows)
+    max_profit = max(row["pnl"] for row in rows)
 
     return {
         "status": "completed",
@@ -203,8 +248,9 @@ async def backtest_pair(request: BacktestRequest):
         "half_life": request.half_life,
         "entry_time": rows[0]["time"],
         "exit_time": rows[-1]["time"],
-        "final_pnl_pct": rows[-1]["pnl_pct"],
-        "max_profit_pct": round(float(max_profit_pct), 4),
+        "strategy": "equity",
+        "final_pnl": rows[-1]["pnl"],
+        "max_profit": round(float(max_profit), 4),
         "points": rows,
         "note": "Forward data may contain fewer bars than half-life if Yahoo has not published enough bars yet.",
     }
