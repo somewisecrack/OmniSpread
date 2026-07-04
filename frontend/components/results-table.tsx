@@ -1,6 +1,11 @@
 "use client";
 
-import { type BacktestStrategy, type PairResult } from "@/lib/api";
+import {
+    getCreditStructure,
+    type BacktestStrategy,
+    type CreditStructureResult,
+    type PairResult,
+} from "@/lib/api";
 import { useState } from "react";
 
 interface ResultsTableProps {
@@ -17,6 +22,10 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
     const [sortKey, setSortKey] = useState<SortKey>("prob_profit");
     const [sortAsc, setSortAsc] = useState(false);
     const [backtestPair, setBacktestPair] = useState<PairResult | null>(null);
+    const [structurePair, setStructurePair] = useState<PairResult | null>(null);
+    const [structure, setStructure] = useState<CreditStructureResult | null>(null);
+    const [structureLoading, setStructureLoading] = useState(false);
+    const [structureError, setStructureError] = useState("");
 
     const formatHalfLife = (hl: number, interval: string) => {
         if (interval === "1h") return `${hl.toFixed(2)}h`;
@@ -63,6 +72,32 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
         window.open(`/backtest?${params.toString()}`, "_blank", "noopener,noreferrer");
         setBacktestPair(null);
     };
+
+    const openCreditStructure = async (pair: PairResult) => {
+        setStructurePair(pair);
+        setStructure(null);
+        setStructureError("");
+        setStructureLoading(true);
+        try {
+            const result = await getCreditStructure({
+                x: pair.x,
+                y: pair.y,
+                qty: pair.qty,
+                direction: pair.direction,
+            });
+            if (result.status === "failed") throw new Error(result.error || "Unable to build structure.");
+            setStructure(result);
+        } catch (error) {
+            setStructureError(error instanceof Error ? error.message : "Unable to build structure.");
+        } finally {
+            setStructureLoading(false);
+        }
+    };
+
+    const isNsePair = (pair: PairResult) =>
+        [pair.x, pair.y].every((ticker) =>
+            ticker.endsWith(".NS") || ["^NSEI", "^NSEBANK", "NIFTY_FIN_SERVICE.NS"].includes(ticker)
+        );
 
     const columns: { key: SortKey; label: string; width?: string }[] = [
         { key: "combo", label: "Trade" },
@@ -147,7 +182,7 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
                                 </th>
                             ))}
                             <th style={{ padding: "12px 10px", textAlign: "center", fontSize: "10.5px", fontWeight: 600, color: "var(--color-text-secondary)", width: "86px", textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                                Backtest
+                                Actions
                             </th>
                         </tr>
                     </thead>
@@ -299,26 +334,42 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
                                     {res.same_sector}
                                 </td>
                                 <td style={{ padding: "12px 10px", textAlign: "center" }}>
-                                    <button
-                                        onClick={(event) => {
-                                            event.stopPropagation();
-                                            setBacktestPair(res);
-                                        }}
-                                        disabled={!endDate}
-                                        title={endDate ? "Open forward half-life backtest" : "Backtest is available for custom scans with an end date"}
-                                        style={{
-                                            padding: "7px 10px",
-                                            borderRadius: "8px",
-                                            border: "1px solid var(--color-border)",
-                                            background: endDate ? "rgba(99, 102, 241, 0.16)" : "rgba(42, 42, 64, 0.35)",
-                                            color: endDate ? "var(--color-accent-cyan)" : "var(--color-text-muted)",
-                                            fontSize: "11px",
-                                            fontWeight: 700,
-                                            cursor: endDate ? "pointer" : "not-allowed",
-                                        }}
-                                    >
-                                        Backtest
-                                    </button>
+                                    <div style={{ display: "grid", gap: "6px" }}>
+                                        <button
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                setBacktestPair(res);
+                                            }}
+                                            disabled={!endDate}
+                                            title={endDate ? "Open forward half-life backtest" : "Backtest is available for custom scans with an end date"}
+                                            style={{
+                                                padding: "7px 10px", borderRadius: "8px", border: "1px solid var(--color-border)",
+                                                background: endDate ? "rgba(99, 102, 241, 0.16)" : "rgba(42, 42, 64, 0.35)",
+                                                color: endDate ? "var(--color-accent-cyan)" : "var(--color-text-muted)",
+                                                fontSize: "11px", fontWeight: 700, cursor: endDate ? "pointer" : "not-allowed",
+                                            }}
+                                        >
+                                            Backtest
+                                        </button>
+                                        <button
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                openCreditStructure(res);
+                                            }}
+                                            disabled={interval !== "1d" || !isNsePair(res)}
+                                            title={interval !== "1d" ? "Credit structures require daily scans" : "Show current NSE credit spread structure"}
+                                            style={{
+                                                padding: "7px 10px", borderRadius: "8px", border: "1px solid var(--color-border)",
+                                                background: interval === "1d" && isNsePair(res) ? "rgba(52,211,153,0.12)" : "rgba(42,42,64,0.35)",
+                                                color: interval === "1d" && isNsePair(res) ? "var(--color-accent-green)" : "var(--color-text-muted)",
+                                                fontSize: "10px", fontWeight: 700,
+                                                cursor: interval === "1d" && isNsePair(res) ? "pointer" : "not-allowed",
+                                                whiteSpace: "nowrap",
+                                            }}
+                                        >
+                                            Credit Structure
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                         ))}
@@ -375,6 +426,61 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
                                 );
                             })}
                         </div>
+                    </div>
+                </div>
+            )}
+            {structurePair && (
+                <div
+                    onClick={() => setStructurePair(null)}
+                    style={{
+                        position: "fixed", inset: 0, zIndex: 1150, background: "rgba(0,0,0,0.72)",
+                        backdropFilter: "blur(8px)", display: "flex", alignItems: "center",
+                        justifyContent: "center", padding: "20px",
+                    }}
+                >
+                    <div
+                        onClick={(event) => event.stopPropagation()}
+                        className="glow-border"
+                        style={{ width: "100%", maxWidth: "680px", padding: "24px", borderRadius: "16px", background: "var(--color-bg-secondary)" }}
+                    >
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: "16px" }}>
+                            <div>
+                                <h2 style={{ fontSize: "18px", fontWeight: 800 }}>Current credit spread structure</h2>
+                                <p style={{ marginTop: "5px", color: "var(--color-text-muted)", fontSize: "12px" }}>
+                                    {structurePair.pair}{structure?.as_of ? ` • NSE snapshot ${structure.as_of}` : ""}
+                                </p>
+                            </div>
+                            <button onClick={() => setStructurePair(null)} style={{ border: 0, background: "transparent", color: "var(--color-text-secondary)", cursor: "pointer", fontSize: "18px" }}>✕</button>
+                        </div>
+
+                        {structureLoading && <p style={{ marginTop: "22px", color: "var(--color-text-secondary)" }}>Loading current futures lots and option chain…</p>}
+                        {structureError && <p style={{ marginTop: "22px", color: "var(--color-accent-red)" }}>{structureError}</p>}
+                        {structure?.legs && (
+                            <>
+                                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "10px", marginTop: "18px" }}>
+                                    {[
+                                        ["Target ratio", structure.qty?.toFixed(2)],
+                                        ["Whole-lot ratio", structure.actual_ratio?.toFixed(4)],
+                                        ["Lots (X / Y)", `${structure.x_lots} / ${structure.y_lots}`],
+                                    ].map(([label, value]) => (
+                                        <div key={label} style={{ padding: "11px", borderRadius: "9px", border: "1px solid var(--color-border)", background: "rgba(10,10,15,0.5)" }}>
+                                            <div style={{ fontSize: "9px", color: "var(--color-text-muted)", textTransform: "uppercase" }}>{label}</div>
+                                            <div style={{ marginTop: "4px", fontFamily: "var(--font-mono)", fontWeight: 700 }}>{value}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div style={{ display: "grid", gap: "9px", marginTop: "18px" }}>
+                                    {structure.legs.map((leg, index) => (
+                                        <div key={`${leg.asset}-${leg.side}-${index}`} style={{ padding: "12px", borderRadius: "9px", border: "1px solid var(--color-border)", fontFamily: "var(--font-mono)", fontSize: "12px" }}>
+                                            <strong style={{ color: leg.side === "BUY" ? "var(--color-accent-green)" : "var(--color-accent-red)" }}>{leg.side}</strong>
+                                            {" "}{leg.lots} lot{leg.lots === 1 ? "" : "s"} × {leg.lot_size} {leg.symbol} {leg.expiry} {leg.strike} {leg.instrument}
+                                            <span style={{ color: "var(--color-text-muted)" }}> • spot ₹{leg.spot?.toFixed(2)}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                                {structure.note && <p style={{ marginTop: "14px", color: "var(--color-text-muted)", fontSize: "11px" }}>{structure.note}</p>}
+                            </>
+                        )}
                     </div>
                 </div>
             )}

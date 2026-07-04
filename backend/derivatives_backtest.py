@@ -81,6 +81,14 @@ def _entry_rows(df: pd.DataFrame, expiry: pd.Timestamp) -> pd.DataFrame:
     return rows[rows["date"] == first_date]
 
 
+def _latest_rows(df: pd.DataFrame, expiry: pd.Timestamp) -> pd.DataFrame:
+    rows = df[df["expiry"] == expiry]
+    if rows.empty:
+        return rows
+    latest_date = rows["date"].max()
+    return rows[rows["date"] == latest_date]
+
+
 def _price_series(df: pd.DataFrame, contract: Contract) -> pd.Series:
     rows = df[
         (df["expiry"] == contract.expiry)
@@ -108,8 +116,9 @@ def _choose_option(
     spot: float,
     offset: float,
     hedge_steps: int = 0,
+    snapshot: pd.DataFrame | None = None,
 ) -> Contract:
-    entry = _entry_rows(option_df, expiry)
+    entry = snapshot if snapshot is not None else _entry_rows(option_df, expiry)
     entry = entry[(entry["OPTION_TYPE"] == option_type) & entry["STRIKE_PRICE"].notna()]
     strikes = sorted(float(value) for value in entry["STRIKE_PRICE"].unique())
     if not strikes:
@@ -129,6 +138,113 @@ def _choose_option(
         option_type=option_type,
         lot_size=int(row["MARKET_LOT"]),
     )
+
+
+def _fetch_credit_snapshot(
+    ticker: str,
+    start: datetime,
+    end: datetime,
+    required_expiry: pd.Timestamp,
+    fetch_future: FetchFuture,
+    fetch_option: FetchOption,
+) -> dict:
+    symbol = nse_symbol(ticker)
+    future_type, option_type = instrument_types(ticker)
+    from_date, to_date = _dates(start, end)
+    future_df = _clean(fetch_future(
+        symbol=symbol, instrument=future_type, from_date=from_date, to_date=to_date
+    ))
+    if future_df.empty:
+        raise ValueError(f"No current futures data was returned for {symbol}.")
+    expiry = _nearest_expiry(future_df, required_expiry)
+    future_rows = _latest_rows(future_df, expiry)
+    if future_rows.empty:
+        raise ValueError(f"No current futures contract was available for {symbol}.")
+
+    option_df = _clean(fetch_option(
+        symbol=symbol, instrument=option_type, option_type=None,
+        from_date=from_date, to_date=to_date,
+    ))
+    option_rows = _latest_rows(option_df, expiry)
+    if option_rows.empty:
+        raise ValueError(f"No current option chain was available for {symbol} {expiry.strftime('%d-%b-%Y')}.")
+    spot_values = future_rows["UNDERLYING_VALUE"].dropna()
+    if spot_values.empty:
+        spot_values = option_rows["UNDERLYING_VALUE"].dropna()
+    if spot_values.empty:
+        raise ValueError(f"No underlying spot value was available for {symbol}.")
+    return {
+        "symbol": symbol,
+        "expiry": expiry,
+        "as_of": pd.Timestamp(future_rows["date"].max()),
+        "future_lot": int(future_rows.iloc[0]["MARKET_LOT"]),
+        "spot": float(spot_values.iloc[0]),
+        "options": option_df,
+        "option_snapshot": option_rows,
+    }
+
+
+def build_credit_spread_structure(
+    *,
+    x: str,
+    y: str,
+    qty: float,
+    direction: str,
+    fetch_future: FetchFuture,
+    fetch_option: FetchOption,
+    as_of_date: datetime | None = None,
+) -> dict:
+    as_of = as_of_date or datetime.now()
+    start = as_of - timedelta(days=14)
+    required_expiry = pd.Timestamp(as_of.date())
+    assets = {
+        "x": _fetch_credit_snapshot(x, start, as_of, required_expiry, fetch_future, fetch_option),
+        "y": _fetch_credit_snapshot(y, start, as_of, required_expiry, fetch_future, fetch_option),
+    }
+    x_lots, y_lots = whole_lot_hedge(qty, assets["x"]["future_lot"], assets["y"]["future_lot"])
+    lot_counts = {"x": x_lots, "y": y_lots}
+    short_spread = direction in {"SHORT_SPREAD", "long_x_short_y"}
+    signs = {"x": 1 if short_spread else -1, "y": -1 if short_spread else 1}
+    legs: list[dict] = []
+
+    for key, asset in assets.items():
+        option_type = "PE" if signs[key] > 0 else "CE"
+        offset = -0.02 if option_type == "PE" else 0.02
+        hedge_steps = -3 if option_type == "PE" else 3
+        sold = _choose_option(
+            asset["options"], asset["expiry"], option_type, asset["spot"], offset,
+            snapshot=asset["option_snapshot"],
+        )
+        hedge = _choose_option(
+            asset["options"], asset["expiry"], option_type, asset["spot"], offset,
+            hedge_steps, snapshot=asset["option_snapshot"],
+        )
+        count = lot_counts[key]
+        for contract, side in ((sold, "SELL"), (hedge, "BUY")):
+            legs.append({
+                "asset": key,
+                "symbol": asset["symbol"],
+                "instrument": option_type,
+                "side": side,
+                "lots": count,
+                "lot_size": contract.lot_size,
+                "strike": contract.strike,
+                "expiry": asset["expiry"].strftime("%d-%b-%Y"),
+                "spot": round(asset["spot"], 2),
+            })
+
+    actual_ratio = x_lots * assets["x"]["future_lot"] / (y_lots * assets["y"]["future_lot"])
+    return {
+        "pair": f"{nse_symbol(x)}/{nse_symbol(y)}",
+        "qty": qty,
+        "direction": direction,
+        "as_of": min(asset["as_of"] for asset in assets.values()).strftime("%d-%b-%Y"),
+        "x_lots": x_lots,
+        "y_lots": y_lots,
+        "actual_ratio": round(actual_ratio, 4),
+        "legs": legs,
+        "note": "Current structure only; prices and available strikes can change before execution.",
+    }
 
 
 def _fetch_symbol(

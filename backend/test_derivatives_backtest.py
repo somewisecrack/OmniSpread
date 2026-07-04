@@ -1,6 +1,10 @@
 import pandas as pd
 
-from derivatives_backtest import run_derivatives_backtest, whole_lot_hedge
+from derivatives_backtest import (
+    build_credit_spread_structure,
+    run_derivatives_backtest,
+    whole_lot_hedge,
+)
 
 
 DATES = ["01-Jun-2026", "02-Jun-2026", "03-Jun-2026", "04-Jun-2026", "30-Jun-2026"]
@@ -91,3 +95,17 @@ def test_credit_spreads_buy_hedges_are_three_strikes_further_otm():
     assert x_legs[0]["side"] == "SELL" and x_legs[0]["strike"] - x_legs[1]["strike"] == 30
     assert y_legs[0]["side"] == "SELL" and y_legs[1]["strike"] - y_legs[0]["strike"] == 30
     assert result["points"][0]["pnl"] == 0
+
+
+def test_current_credit_structure_uses_whole_lots_and_correct_spread_sides():
+    result = build_credit_spread_structure(
+        x="AAA.NS", y="BBB.NS", qty=1.5, direction="SHORT_SPREAD",
+        fetch_future=_fetch_future, fetch_option=_fetch_option,
+        as_of_date=pd.Timestamp("2026-06-30").to_pydatetime(),
+    )
+    assert (result["x_lots"], result["y_lots"]) == (3, 5)
+    assert result["actual_ratio"] == 1.5
+    assert [(leg["asset"], leg["side"], leg["instrument"]) for leg in result["legs"]] == [
+        ("x", "SELL", "PE"), ("x", "BUY", "PE"),
+        ("y", "SELL", "CE"), ("y", "BUY", "CE"),
+    ]

@@ -75,6 +75,21 @@ export interface BacktestLeg {
     lot_size: number;
     strike?: number;
     expiry: string;
+    spot?: number;
+}
+
+export interface CreditStructureResult {
+    status: "completed" | "failed";
+    pair?: string;
+    qty?: number;
+    direction?: string;
+    as_of?: string;
+    x_lots?: number;
+    y_lots?: number;
+    actual_ratio?: number;
+    legs?: BacktestLeg[];
+    note?: string;
+    error?: string;
 }
 
 export interface BacktestResult {
@@ -132,6 +147,21 @@ export async function runBacktest(request: BacktestRequest): Promise<BacktestRes
         body: JSON.stringify(request),
     });
     if (!res.ok) throw new Error(`Backtest request failed: ${res.statusText}`);
+    return res.json();
+}
+
+export async function getCreditStructure(request: {
+    x: string;
+    y: string;
+    qty: number;
+    direction: string;
+}): Promise<CreditStructureResult> {
+    const res = await fetch(`${API_BASE}/credit-spread-structure`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+    });
+    if (!res.ok) throw new Error(`Credit structure request failed: ${res.statusText}`);
     return res.json();
 }
 

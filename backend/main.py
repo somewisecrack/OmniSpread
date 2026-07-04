@@ -6,9 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import yfinance as yf
 
-from models import BacktestRequest, ScanRequest, TaskResponse
+from models import BacktestRequest, CreditStructureRequest, ScanRequest, TaskResponse
 from engine import OmniSpreadEngine
-from derivatives_backtest import run_derivatives_backtest
+from derivatives_backtest import build_credit_spread_structure, run_derivatives_backtest
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("OmniSpreadAPI")
@@ -140,6 +140,25 @@ def _close_frame(raw: pd.DataFrame, tickers: list[str]) -> pd.DataFrame:
     if isinstance(close, pd.Series):
         close = close.to_frame(name=tickers[0])
     return close[[t for t in tickers if t in close.columns]].dropna()
+
+
+@app.post("/credit-spread-structure")
+async def credit_spread_structure(request: CreditStructureRequest):
+    try:
+        from nselib import derivatives
+
+        result = build_credit_spread_structure(
+            x=request.x,
+            y=request.y,
+            qty=request.qty,
+            direction=request.direction,
+            fetch_future=derivatives.future_price_volume_data,
+            fetch_option=derivatives.option_price_volume_data,
+        )
+        return {"status": "completed", **result}
+    except Exception as exc:
+        logger.exception("Credit spread structure failed")
+        return {"status": "failed", "error": str(exc)}
 
 
 @app.post("/backtest")

@@ -21,6 +21,13 @@ class BacktestRequest(BaseModel):
     strategy: Literal["equity", "futures", "futures_options", "credit_spreads"] = "equity"
 
 
+class CreditStructureRequest(BaseModel):
+    x: str
+    y: str
+    qty: float
+    direction: str
+
+
 class PairResult(BaseModel):
     pair: str
     x: str = ""
