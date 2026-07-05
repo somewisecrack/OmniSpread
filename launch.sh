@@ -21,15 +21,15 @@ if [ "$CURRENT_ARCH" = "x86_64" ]; then
 fi
 
 # Check if already running
-if lsof -i:8000 >/dev/null 2>&1 && lsof -i:3000 >/dev/null 2>&1; then
+if lsof -tiTCP:8000 -sTCP:LISTEN >/dev/null 2>&1 && lsof -tiTCP:3000 -sTCP:LISTEN >/dev/null 2>&1; then
     echo "Already running, opening browser" >> "$LOGS/launcher.log"
     open "http://localhost:3000"
     exit 0
 fi
 
 # Kill old processes
-lsof -ti:8000 | xargs kill -9 2>/dev/null
-lsof -ti:3000 | xargs kill -9 2>/dev/null
+lsof -tiTCP:8000 -sTCP:LISTEN | xargs kill -9 2>/dev/null
+lsof -tiTCP:3000 -sTCP:LISTEN | xargs kill -9 2>/dev/null
 
 # Clear Next.js cache
 rm -rf "$PROJECT_DIR/frontend/.next/cache" 2>/dev/null
@@ -39,7 +39,25 @@ sleep 1
 # Start backend
 cd "$PROJECT_DIR/backend"
 echo "Starting backend..." >> "$LOGS/launcher.log"
-nohup python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 >> "$LOGS/backend.log" 2>&1 &
+
+PYTHON_BIN="python3"
+if [ -x "$PROJECT_DIR/backend/.venv/bin/python" ]; then
+    PYTHON_BIN="$PROJECT_DIR/backend/.venv/bin/python"
+elif ! "$PYTHON_BIN" -c "import uvicorn" >/dev/null 2>&1; then
+    for candidate in \
+        "/Library/Frameworks/Python.framework/Versions/3.14/bin/python3" \
+        "/opt/homebrew/bin/python3" \
+        "/usr/local/bin/python3" \
+        "/usr/bin/python3"; do
+        if [ -x "$candidate" ] && "$candidate" -c "import uvicorn" >/dev/null 2>&1; then
+            PYTHON_BIN="$candidate"
+            break
+        fi
+    done
+fi
+
+echo "Backend python: $PYTHON_BIN" >> "$LOGS/launcher.log"
+nohup "$PYTHON_BIN" -m uvicorn main:app --host 0.0.0.0 --port 8000 >> "$LOGS/backend.log" 2>&1 &
 disown
 
 sleep 2

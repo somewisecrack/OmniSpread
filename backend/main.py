@@ -3,8 +3,11 @@ import logging
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 
-from models import ScanRequest, TaskResponse
+from models import BacktestRequest, CreditStructureRequest, ScanRequest, TaskResponse
 from engine import OmniSpreadEngine
+from derivatives_backtest import build_credit_spread_structure, run_derivatives_backtest
+from backtest_runner import run_equity_backtest
+from presets import PRESETS
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("OmniSpreadAPI")
@@ -21,65 +24,6 @@ app.add_middleware(
 
 # In-memory task store
 tasks: dict[str, dict] = {}
-
-# Pre-built ticker presets
-PRESETS = {
-    "mega_tech": ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "NFLX", "AMD", "INTC"],
-    "financials": ["JPM", "BAC", "GS", "MS", "WFC", "C", "BLK", "SCHW", "AXP", "USB"],
-    "energy": ["XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "VLO", "OXY", "HAL"],
-    "healthcare": ["JNJ", "UNH", "PFE", "ABBV", "MRK", "LLY", "TMO", "ABT", "DHR", "BMY"],
-    "consumer": ["KO", "PEP", "PG", "COST", "WMT", "MCD", "NKE", "SBUX", "TGT", "CL"],
-    "semiconductors": ["NVDA", "AMD", "INTC", "AVGO", "QCOM", "TXN", "MU", "LRCX", "AMAT", "MRVL"],
-    "nifty_50": [
-        "^NSEI", "^NSEBANK", "NIFTY_FIN_SERVICE.NS", "TCS.NS", "INFY.NS", "TECHM.NS", "LTIM.NS",
-        "HCLTECH.NS", "HINDALCO.NS", "EICHERMOT.NS", "WIPRO.NS", "TATASTEEL.NS", "HEROMOTOCO.NS",
-        "TATACONSUM.NS", "DIVISLAB.NS", "NESTLEIND.NS", "UPL.NS", "ADANIPORTS.NS", "CIPLA.NS",
-        "LT.NS", "ICICIBANK.NS", "HINDUNILVR.NS", "ADANIENT.NS", "ASIANPAINT.NS", "BRITANNIA.NS",
-        "ONGC.NS", "COALINDIA.NS", "TATAMOTORS.NS", "SBILIFE.NS", "JSWSTEEL.NS", "BHARTIARTL.NS",
-        "ITC.NS", "BAJFINANCE.NS", "RELIANCE.NS", "HDFCBANK.NS", "KOTAKBANK.NS", "APOLLOHOSP.NS",
-        "INDUSINDBK.NS", "NTPC.NS", "BPCL.NS", "BAJAJ-AUTO.NS", "SBIN.NS", "BAJAJFINSV.NS",
-        "GRASIM.NS", "AXISBANK.NS", "SUNPHARMA.NS", "M&M.NS", "MARUTI.NS", "TITAN.NS",
-        "ULTRACEMCO.NS", "DRREDDY.NS", "POWERGRID.NS", "HDFCLIFE.NS",
-    ],
-    "nifty_fno": [
-        "^NSEI", "^NSEBANK", "NIFTY_FIN_SERVICE.NS", "360ONE.NS", "ABB.NS", "ABCAPITAL.NS",
-        "ADANIENSOL.NS", "ADANIENT.NS", "ADANIGREEN.NS", "ADANIPORTS.NS", "ALKEM.NS", "AMBER.NS",
-        "AMBUJACEM.NS", "ANGELONE.NS", "APLAPOLLO.NS", "APOLLOHOSP.NS", "ASHOKLEY.NS",
-        "ASIANPAINT.NS", "ASTRAL.NS", "AUBANK.NS", "AUROPHARMA.NS", "AXISBANK.NS",
-        "BAJAJ-AUTO.NS", "BAJAJFINSV.NS", "BAJFINANCE.NS", "BANDHANBNK.NS", "BANKBARODA.NS",
-        "BANKEX.NS", "BANKINDIA.NS", "BDL.NS", "BEL.NS", "BHARATFORG.NS", "BHARTIARTL.NS",
-        "BHEL.NS", "BIOCON.NS", "BLUESTARCO.NS", "BOSCHLTD.NS", "BPCL.NS", "BRITANNIA.NS",
-        "BSE.NS", "CAMS.NS", "CANBK.NS", "CDSL.NS", "CGPOWER.NS", "CHOLAFIN.NS", "CIPLA.NS",
-        "COALINDIA.NS", "COFORGE.NS", "COLPAL.NS", "CONCOR.NS", "CROMPTON.NS", "CUMMINSIND.NS",
-        "CYIENT.NS", "DABUR.NS", "DALBHARAT.NS", "DELHIVERY.NS", "DIVISLAB.NS", "DIXON.NS",
-        "DLF.NS", "DMART.NS", "DRREDDY.NS", "EICHERMOT.NS", "ETERNAL.NS", "EXIDEIND.NS",
-        "FEDERALBNK.NS", "FORTIS.NS", "GAIL.NS", "GLENMARK.NS", "GMRAIRPORT.NS", "GODREJCP.NS",
-        "GODREJPROP.NS", "GRASIM.NS", "HAL.NS", "HAVELLS.NS", "HCLTECH.NS", "HDFCAMC.NS",
-        "HDFCBANK.NS", "HDFCLIFE.NS", "HEROMOTOCO.NS", "HFCL.NS", "HINDALCO.NS", "HINDPETRO.NS",
-        "HINDUNILVR.NS", "HINDZINC.NS", "HUDCO.NS", "ICICIBANK.NS", "ICICIGI.NS", "ICICIPRULI.NS",
-        "IDEA.NS", "IDFCFIRSTB.NS", "IEX.NS", "IGL.NS", "IIFL.NS", "INDHOTEL.NS", "INDIANB.NS",
-        "INDIGO.NS", "INDUSINDBK.NS", "INDUSTOWER.NS", "INFY.NS", "INOXWIND.NS", "IOC.NS",
-        "IRCTC.NS", "IREDA.NS", "IRFC.NS", "ITC.NS", "JINDALSTEL.NS", "JIOFIN.NS",
-        "JSWENERGY.NS", "JSWSTEEL.NS", "JUBLFOOD.NS", "KALYANKJIL.NS", "KAYNES.NS", "KEI.NS",
-        "KFINTECH.NS", "KOTAKBANK.NS", "KPITTECH.NS", "LAURUSLABS.NS", "LICHSGFIN.NS", "LICI.NS",
-        "LODHA.NS", "LT.NS", "LTF.NS", "LTIM.NS", "LUPIN.NS", "M&M.NS", "MANAPPURAM.NS",
-        "MANKIND.NS", "MARICO.NS", "MARUTI.NS", "MAXHEALTH.NS", "MAZDOCK.NS", "MCX.NS",
-        "MFSL.NS", "MOTHERSON.NS", "MPHASIS.NS", "MUTHOOTFIN.NS", "NATIONALUM.NS", "NAUKRI.NS",
-        "NBCC.NS", "NCC.NS", "NESTLEIND.NS", "NHPC.NS", "NMDC.NS", "NTPC.NS", "NUVAMA.NS",
-        "NYKAA.NS", "OBEROIRLTY.NS", "OFSS.NS", "OIL.NS", "ONGC.NS", "PAGEIND.NS",
-        "PATANJALI.NS", "PAYTM.NS", "PERSISTENT.NS", "PETRONET.NS", "PFC.NS", "PGEL.NS",
-        "PHOENIXLTD.NS", "PIDILITIND.NS", "PIIND.NS", "PNB.NS", "PNBHOUSING.NS", "POLICYBZR.NS",
-        "POLYCAB.NS", "POWERGRID.NS", "PPLPHARMA.NS", "PRESTIGE.NS", "RBLBANK.NS", "RECLTD.NS",
-        "RELIANCE.NS", "RVNL.NS", "SAIL.NS", "SAMMAANCAP.NS", "SBICARD.NS", "SBILIFE.NS",
-        "SBIN.NS", "SENSEX.NS", "SHREECEM.NS", "SHRIRAMFIN.NS", "SIEMENS.NS", "SOLARINDS.NS",
-        "SONACOMS.NS", "SRF.NS", "SUNPHARMA.NS", "SUPREMEIND.NS", "SUZLON.NS", "SYNGENE.NS",
-        "TATACHEM.NS", "TATACONSUM.NS", "TATAELXSI.NS", "TATAMOTORS.NS", "TATAPOWER.NS",
-        "TATASTEEL.NS", "TATATECH.NS", "TCS.NS", "TECHM.NS", "TIINDIA.NS", "TITAGARH.NS",
-        "TITAN.NS", "TORNTPHARM.NS", "TORNTPOWER.NS", "TRENT.NS", "TVSMOTOR.NS",
-        "ULTRACEMCO.NS", "UNIONBANK.NS", "UNITDSPR.NS", "UNOMINDA.NS", "UPL.NS", "VBL.NS",
-        "VEDL.NS", "VOLTAS.NS", "WIPRO.NS", "YESBANK.NS", "ZYDUSLIFE.NS",
-    ],
-}
 
 
 @app.get("/")
@@ -107,6 +51,110 @@ async def get_results(task_id: str):
     if not task:
         return {"task_id": task_id, "status": "not_found", "results": []}
     return task
+
+
+@app.post("/credit-spread-structure")
+async def credit_spread_structure(request: CreditStructureRequest):
+    try:
+        from nselib import derivatives
+
+        result = build_credit_spread_structure(
+            x=request.x,
+            y=request.y,
+            qty=request.qty,
+            direction=request.direction,
+            fetch_future=derivatives.future_price_volume_data,
+            fetch_option=derivatives.option_price_volume_data,
+        )
+        return {"status": "completed", **result}
+    except Exception as exc:
+        logger.exception("Credit spread structure failed")
+        return {"status": "failed", "error": str(exc)}
+
+
+@app.post("/backtest")
+async def backtest_pair(request: BacktestRequest):
+    if request.half_life < 1:
+        return {"status": "failed", "error": "Half-life must be at least 1 bar"}
+
+    if request.strategy != "equity":
+        if request.interval != "1d":
+            return {
+                "status": "failed",
+                "error": "Futures and options backtests are available only for daily scans.",
+            }
+        try:
+            from nselib import derivatives
+
+            result = run_derivatives_backtest(
+                x=request.x,
+                y=request.y,
+                qty=request.qty,
+                direction=request.direction,
+                half_life=request.half_life,
+                end_date=request.end_date,
+                strategy=request.strategy,
+                fetch_future=derivatives.future_price_volume_data,
+                fetch_option=derivatives.option_price_volume_data,
+            )
+        except Exception as exc:
+            logger.exception("Derivatives backtest failed")
+            return {"status": "failed", "error": str(exc)}
+
+        rows = result["points"]
+        return {
+            "status": "completed",
+            "pair": f"{request.x.replace('.NS','')}/{request.y.replace('.NS','')}",
+            "x": request.x,
+            "y": request.y,
+            "qty": request.qty,
+            "direction": request.direction,
+            "strategy": request.strategy,
+            "interval": "1d",
+            "half_life": request.half_life,
+            "entry_time": rows[0]["time"],
+            "exit_time": result["half_life_time"],
+            "final_pnl": result["half_life_pnl"],
+            "max_profit": result["half_life_max_profit"],
+            "expiry_time": result["expiry_time"],
+            "expiry_pnl": result["expiry_pnl"],
+            "points": rows,
+            "legs": result["legs"],
+            "x_lots": result["x_lots"],
+            "y_lots": result["y_lots"],
+            "note": "Daily NSE closing prices; excludes brokerage, taxes, slippage, margin and financing costs.",
+        }
+
+    try:
+        result = run_equity_backtest(
+            x=request.x,
+            y=request.y,
+            qty=request.qty,
+            direction=request.direction,
+            interval=request.interval,
+            half_life=request.half_life,
+            end_date=request.end_date,
+        )
+    except ValueError as exc:
+        return {"status": "failed", "error": str(exc)}
+
+    return {
+        "status": "completed",
+        "pair": f"{request.x.replace('.NS','').replace('.BO','')}/{request.y.replace('.NS','').replace('.BO','')}",
+        "x": request.x,
+        "y": request.y,
+        "qty": request.qty,
+        "direction": request.direction,
+        "interval": result["interval"],
+        "half_life": request.half_life,
+        "entry_time": result["entry_time"],
+        "exit_time": result["exit_time"],
+        "strategy": "equity",
+        "final_pnl": result["final_pnl"],
+        "max_profit": result["max_profit"],
+        "points": result["points"],
+        "note": "Forward data may contain fewer bars than half-life if Yahoo has not published enough bars yet.",
+    }
 
 
 def run_engine(task_id: str, request: ScanRequest):

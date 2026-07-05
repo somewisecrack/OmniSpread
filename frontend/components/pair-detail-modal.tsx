@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { createChart, type IChartApi, LineSeries } from "lightweight-charts";
+import { createChart, type IChartApi, LineSeries, type UTCTimestamp } from "lightweight-charts";
 import { type PairResult } from "@/lib/api";
 
 interface PairDetailModalProps {
@@ -38,10 +38,10 @@ export default function PairDetailModal({ pair, onClose }: PairDetailModalProps)
         });
         chartRef.current = chart;
 
-        const data = pair.historical_z_scores.map(item => ({ time: item.time, value: item.value }));
-        const upperBand = pair.historical_z_scores.map(item => ({ time: item.time, value: 2 }));
-        const lowerBand = pair.historical_z_scores.map(item => ({ time: item.time, value: -2 }));
-        const meanLine = pair.historical_z_scores.map(item => ({ time: item.time, value: 0 }));
+        const data = pair.historical_z_scores.map(item => ({ time: item.time as UTCTimestamp, value: item.value }));
+        const upperBand = pair.historical_z_scores.map(item => ({ time: item.time as UTCTimestamp, value: 2 }));
+        const lowerBand = pair.historical_z_scores.map(item => ({ time: item.time as UTCTimestamp, value: -2 }));
+        const meanLine = pair.historical_z_scores.map(item => ({ time: item.time as UTCTimestamp, value: 0 }));
 
         chart.addSeries(LineSeries, { color: "#6366f1", lineWidth: 2 }).setData(data);
         chart.addSeries(LineSeries, { color: "#f87171", lineWidth: 1, lineStyle: 2 }).setData(upperBand);
@@ -58,15 +58,22 @@ export default function PairDetailModal({ pair, onClose }: PairDetailModalProps)
 
     if (!pair) return null;
 
+    const xSymbol = pair.pair.split("/")[0];
+    const ySymbol = pair.pair.split("/")[1];
+    const signalText = pair.direction === "SHORT_SPREAD" || pair.direction === "long_x_short_y"
+        ? `Signal: Buy ${xSymbol} — Sell ${ySymbol}`
+        : `Signal: Sell ${xSymbol} — Buy ${ySymbol}`;
+    const isShortSpread = pair.direction === "SHORT_SPREAD" || pair.direction === "long_x_short_y";
+
     const stats = [
-        { label: "Z-Score", value: `${pair.z_score > 0 ? "+" : ""}${pair.z_score}`, color: pair.z_score > 0 ? "var(--color-accent-red)" : "var(--color-accent-green)" },
-        { label: "P(Profit)", value: `${pair.prob_profit}%`, sub: `${pair.prob_profit_low}–${pair.prob_profit_high}%`, color: "var(--color-accent-blue)" },
-        { label: "Half-Life", value: `${pair.half_life}d`, color: "var(--color-text-primary)" },
+        { label: "Z-Score", value: `${pair.z_score > 0 ? "+" : ""}${pair.z_score.toFixed(2)}`, color: pair.z_score > 0 ? "var(--color-accent-red)" : "var(--color-accent-green)" },
+        { label: "P(Profit)", value: `${pair.prob_profit.toFixed(2)}%`, sub: `${pair.prob_profit_low.toFixed(2)}–${pair.prob_profit_high.toFixed(2)}%`, color: "var(--color-accent-blue)" },
+        { label: "Half-Life", value: `${pair.half_life.toFixed(2)}d`, color: "var(--color-text-primary)" },
         { label: "Hurst", value: pair.hurst.toFixed(2), color: pair.hurst < 0.35 ? "var(--color-accent-green)" : "var(--color-accent-cyan)" },
-        { label: "Exp. Return", value: `${pair.exp_return}%`, color: "var(--color-accent-yellow)" },
-        { label: "Move to Mean", value: `${pair.move_to_mean}`, color: "var(--color-text-secondary)" },
-        { label: "Unit Price", value: `₹${pair.unit_price}`, color: "var(--color-text-secondary)" },
-        { label: "ρ Price", value: `${pair.price_corr}`, color: pair.price_corr > 0.7 ? "var(--color-accent-green)" : "var(--color-text-secondary)" },
+        { label: "Exp. Return", value: `${pair.exp_return.toFixed(2)}%`, color: "var(--color-accent-yellow)" },
+        { label: "Move to Mean", value: `${pair.move_to_mean.toFixed(2)}`, color: "var(--color-text-secondary)" },
+        { label: "Unit Price", value: `₹${pair.unit_price.toFixed(2)}`, color: "var(--color-text-secondary)" },
+        { label: "ρ Price", value: `${pair.price_corr.toFixed(2)}`, color: pair.price_corr > 0.7 ? "var(--color-accent-green)" : "var(--color-text-secondary)" },
     ];
 
     return (
@@ -119,7 +126,7 @@ export default function PairDetailModal({ pair, onClose }: PairDetailModalProps)
                     }}>
                         <span>Extreme Z in HL: <strong style={{ color: pair.extreme_z_in_hl === "Yes" ? "var(--color-accent-red)" : "var(--color-text-primary)" }}>{pair.extreme_z_in_hl}</strong> ({pair.extreme_z_detail})</span>
                         {pair.profitable_since_extreme !== "N/A" && (
-                            <span>PnL since: <strong style={{ color: pair.pnl_since_extreme > 0 ? "var(--color-accent-green)" : "var(--color-accent-red)" }}>{pair.pnl_since_extreme}</strong></span>
+                            <span>PnL since: <strong style={{ color: pair.pnl_since_extreme > 0 ? "var(--color-accent-green)" : "var(--color-accent-red)" }}>{pair.pnl_since_extreme.toFixed(2)}</strong></span>
                         )}
                     </div>
                 )}
@@ -137,12 +144,12 @@ export default function PairDetailModal({ pair, onClose }: PairDetailModalProps)
                 {/* Signal */}
                 <div style={{
                     marginTop: "14px", padding: "10px 14px", borderRadius: "8px",
-                    background: pair.z_score > 0 ? "rgba(248, 113, 113, 0.08)" : "rgba(52, 211, 153, 0.08)",
-                    border: `1px solid ${pair.z_score > 0 ? "rgba(248,113,113,0.2)" : "rgba(52,211,153,0.2)"}`,
-                    fontSize: "12px", color: pair.z_score > 0 ? "var(--color-accent-red)" : "var(--color-accent-green)",
+                    background: isShortSpread ? "rgba(248, 113, 113, 0.08)" : "rgba(52, 211, 153, 0.08)",
+                    border: `1px solid ${isShortSpread ? "rgba(248,113,113,0.2)" : "rgba(52,211,153,0.2)"}`,
+                    fontSize: "12px", color: isShortSpread ? "var(--color-accent-red)" : "var(--color-accent-green)",
                     textAlign: "center", fontWeight: 600,
                 }}>
-                    Signal: {pair.z_score > 0 ? "Sell" : "Buy"} {pair.pair.split("/")[0]} — {pair.z_score > 0 ? "Buy" : "Sell"} {pair.pair.split("/")[1]}
+                    {signalText}
                 </div>
             </div>
         </div>

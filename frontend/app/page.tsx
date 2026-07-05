@@ -13,16 +13,19 @@ export default function Home() {
   const [scanStatus, setScanStatus] = useState<string>("");
   const [error, setError] = useState<string>("");
   const [currentInterval, setCurrentInterval] = useState<string>("1d");
+  const [currentEndDate, setCurrentEndDate] = useState<string>("");
 
   const handleReset = () => {
     setResults([]);
     setScanStatus("");
     setError("");
     setSelectedPair(null);
+    setCurrentEndDate("");
   };
 
   const handleScan = async (tickers: string[], period: string, interval?: string, startDate?: string, endDate?: string) => {
     setCurrentInterval(interval || "1d");
+    setCurrentEndDate(endDate || "");
     setIsScanning(true);
     setResults([]);
     setError("");
@@ -163,6 +166,7 @@ export default function Home() {
         isLoading={isScanning}
         onRowClick={setSelectedPair}
         interval={currentInterval}
+        endDate={currentEndDate}
       />
 
       {/* Modal */}

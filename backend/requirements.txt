@@ -6,3 +6,4 @@ pandas
 numpy
 scipy
 pydantic
+nselib==2.5.1
