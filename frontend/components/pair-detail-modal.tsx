@@ -66,14 +66,14 @@ export default function PairDetailModal({ pair, onClose }: PairDetailModalProps)
     const isShortSpread = pair.direction === "SHORT_SPREAD" || pair.direction === "long_x_short_y";
 
     const stats = [
-        { label: "Z-Score", value: `${pair.z_score > 0 ? "+" : ""}${pair.z_score}`, color: pair.z_score > 0 ? "var(--color-accent-red)" : "var(--color-accent-green)" },
-        { label: "P(Profit)", value: `${pair.prob_profit}%`, sub: `${pair.prob_profit_low}–${pair.prob_profit_high}%`, color: "var(--color-accent-blue)" },
-        { label: "Half-Life", value: `${pair.half_life}d`, color: "var(--color-text-primary)" },
+        { label: "Z-Score", value: `${pair.z_score > 0 ? "+" : ""}${pair.z_score.toFixed(2)}`, color: pair.z_score > 0 ? "var(--color-accent-red)" : "var(--color-accent-green)" },
+        { label: "P(Profit)", value: `${pair.prob_profit.toFixed(2)}%`, sub: `${pair.prob_profit_low.toFixed(2)}–${pair.prob_profit_high.toFixed(2)}%`, color: "var(--color-accent-blue)" },
+        { label: "Half-Life", value: `${pair.half_life.toFixed(2)}d`, color: "var(--color-text-primary)" },
         { label: "Hurst", value: pair.hurst.toFixed(2), color: pair.hurst < 0.35 ? "var(--color-accent-green)" : "var(--color-accent-cyan)" },
-        { label: "Exp. Return", value: `${pair.exp_return}%`, color: "var(--color-accent-yellow)" },
-        { label: "Move to Mean", value: `${pair.move_to_mean}`, color: "var(--color-text-secondary)" },
-        { label: "Unit Price", value: `₹${pair.unit_price}`, color: "var(--color-text-secondary)" },
-        { label: "ρ Price", value: `${pair.price_corr}`, color: pair.price_corr > 0.7 ? "var(--color-accent-green)" : "var(--color-text-secondary)" },
+        { label: "Exp. Return", value: `${pair.exp_return.toFixed(2)}%`, color: "var(--color-accent-yellow)" },
+        { label: "Move to Mean", value: `${pair.move_to_mean.toFixed(2)}`, color: "var(--color-text-secondary)" },
+        { label: "Unit Price", value: `₹${pair.unit_price.toFixed(2)}`, color: "var(--color-text-secondary)" },
+        { label: "ρ Price", value: `${pair.price_corr.toFixed(2)}`, color: pair.price_corr > 0.7 ? "var(--color-accent-green)" : "var(--color-text-secondary)" },
     ];
 
     return (
@@ -126,7 +126,7 @@ export default function PairDetailModal({ pair, onClose }: PairDetailModalProps)
                     }}>
                         <span>Extreme Z in HL: <strong style={{ color: pair.extreme_z_in_hl === "Yes" ? "var(--color-accent-red)" : "var(--color-text-primary)" }}>{pair.extreme_z_in_hl}</strong> ({pair.extreme_z_detail})</span>
                         {pair.profitable_since_extreme !== "N/A" && (
-                            <span>PnL since: <strong style={{ color: pair.pnl_since_extreme > 0 ? "var(--color-accent-green)" : "var(--color-accent-red)" }}>{pair.pnl_since_extreme}</strong></span>
+                            <span>PnL since: <strong style={{ color: pair.pnl_since_extreme > 0 ? "var(--color-accent-green)" : "var(--color-accent-red)" }}>{pair.pnl_since_extreme.toFixed(2)}</strong></span>
                         )}
                     </div>
                 )}

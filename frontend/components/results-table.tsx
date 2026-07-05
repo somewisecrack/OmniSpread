@@ -18,6 +18,25 @@ interface ResultsTableProps {
 
 type SortKey = keyof PairResult;
 
+// Count trading days (Mon–Fri) strictly after `dateStr` up to and including today.
+// An empty/invalid date (period scans "up to now") counts as 0 → treated as current.
+const tradingDaysSince = (dateStr: string): number => {
+    if (!dateStr) return 0;
+    const end = new Date(`${dateStr}T00:00:00`);
+    if (Number.isNaN(end.getTime())) return 0;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let count = 0;
+    const cursor = new Date(end);
+    cursor.setDate(cursor.getDate() + 1);
+    while (cursor <= today) {
+        const day = cursor.getDay();
+        if (day !== 0 && day !== 6) count += 1;
+        cursor.setDate(cursor.getDate() + 1);
+    }
+    return count;
+};
+
 export default function ResultsTable({ results, isLoading, onRowClick, interval, endDate }: ResultsTableProps) {
     const [sortKey, setSortKey] = useState<SortKey>("prob_profit");
     const [sortAsc, setSortAsc] = useState(false);
@@ -93,6 +112,10 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
             setStructureLoading(false);
         }
     };
+
+    // If trading days have elapsed since the scan's end date, forward price data
+    // exists → show Backtest. Otherwise the end date is current → show Credit Structure.
+    const isBacktestScenario = tradingDaysSince(endDate) > 0;
 
     const isNsePair = (pair: PairResult) =>
         [pair.x, pair.y].every((ticker) =>
@@ -335,40 +358,42 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
                                 </td>
                                 <td style={{ padding: "12px 10px", textAlign: "center" }}>
                                     <div style={{ display: "grid", gap: "6px" }}>
-                                        <button
-                                            onClick={(event) => {
-                                                event.stopPropagation();
-                                                setBacktestPair(res);
-                                            }}
-                                            disabled={!endDate}
-                                            title={endDate ? "Open forward half-life backtest" : "Backtest is available for custom scans with an end date"}
-                                            style={{
-                                                padding: "7px 10px", borderRadius: "8px", border: "1px solid var(--color-border)",
-                                                background: endDate ? "rgba(99, 102, 241, 0.16)" : "rgba(42, 42, 64, 0.35)",
-                                                color: endDate ? "var(--color-accent-cyan)" : "var(--color-text-muted)",
-                                                fontSize: "11px", fontWeight: 700, cursor: endDate ? "pointer" : "not-allowed",
-                                            }}
-                                        >
-                                            Backtest
-                                        </button>
-                                        <button
-                                            onClick={(event) => {
-                                                event.stopPropagation();
-                                                openCreditStructure(res);
-                                            }}
-                                            disabled={interval !== "1d" || !isNsePair(res)}
-                                            title={interval !== "1d" ? "Credit structures require daily scans" : "Show current NSE credit spread structure"}
-                                            style={{
-                                                padding: "7px 10px", borderRadius: "8px", border: "1px solid var(--color-border)",
-                                                background: interval === "1d" && isNsePair(res) ? "rgba(52,211,153,0.12)" : "rgba(42,42,64,0.35)",
-                                                color: interval === "1d" && isNsePair(res) ? "var(--color-accent-green)" : "var(--color-text-muted)",
-                                                fontSize: "10px", fontWeight: 700,
-                                                cursor: interval === "1d" && isNsePair(res) ? "pointer" : "not-allowed",
-                                                whiteSpace: "nowrap",
-                                            }}
-                                        >
-                                            Credit Structure
-                                        </button>
+                                        {isBacktestScenario ? (
+                                            <button
+                                                onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    setBacktestPair(res);
+                                                }}
+                                                title="Open forward half-life backtest"
+                                                style={{
+                                                    padding: "7px 10px", borderRadius: "8px", border: "1px solid var(--color-border)",
+                                                    background: "rgba(99, 102, 241, 0.16)",
+                                                    color: "var(--color-accent-cyan)",
+                                                    fontSize: "11px", fontWeight: 700, cursor: "pointer",
+                                                }}
+                                            >
+                                                Backtest
+                                            </button>
+                                        ) : (
+                                            <button
+                                                onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    openCreditStructure(res);
+                                                }}
+                                                disabled={interval !== "1d" || !isNsePair(res)}
+                                                title={interval !== "1d" ? "Credit structures require daily scans" : "Show current NSE credit spread structure"}
+                                                style={{
+                                                    padding: "7px 10px", borderRadius: "8px", border: "1px solid var(--color-border)",
+                                                    background: interval === "1d" && isNsePair(res) ? "rgba(52,211,153,0.12)" : "rgba(42,42,64,0.35)",
+                                                    color: interval === "1d" && isNsePair(res) ? "var(--color-accent-green)" : "var(--color-text-muted)",
+                                                    fontSize: "10px", fontWeight: 700,
+                                                    cursor: interval === "1d" && isNsePair(res) ? "pointer" : "not-allowed",
+                                                    whiteSpace: "nowrap",
+                                                }}
+                                            >
+                                                Credit Structure
+                                            </button>
+                                        )}
                                     </div>
                                 </td>
                             </tr>
