@@ -2,7 +2,7 @@
 
 **Statistical Pairs Trading Scanner** — Kalman-filtered cointegration, Monte Carlo P(profit), and Hurst exponent analysis.
 
-![OmniSpread Screenshot](docs/screenshot.png)
+![OmniSpread Screenshot](docs/screenshot.jpg)
 
 ## Features
 
