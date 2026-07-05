@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from fractions import Fraction
 from typing import Callable
 
 import pandas as pd
+from margin_estimator import estimate_margin
 
 
 FetchFuture = Callable[..., pd.DataFrame]
@@ -38,14 +38,47 @@ def instrument_types(ticker: str) -> tuple[str, str]:
     return "FUTSTK", "OPTSTK"
 
 
-def whole_lot_hedge(qty: float, x_lot: int, y_lot: int, max_lots: int = 20) -> tuple[int, int]:
-    """Return the smallest practical whole-lot approximation to qty X shares per Y share."""
+def whole_lot_hedge(
+    qty: float,
+    x_lot: int,
+    y_lot: int,
+    max_lots: int = 8,
+    tolerance: float = 0.05,
+) -> tuple[int, int]:
+    """Return a compact whole-lot approximation to qty X shares per Y share.
+
+    Near-equal lot ratios are deliberately rounded to 1:1. Otherwise, prefer
+    the smallest position whose share-ratio error is within five percent,
+    rather than overfitting the statistical hedge ratio with many lots.
+    """
     if qty <= 0 or x_lot <= 0 or y_lot <= 0:
         raise ValueError("Hedge ratio and market lots must be positive.")
-    ratio = Fraction(qty * y_lot / x_lot).limit_denominator(max_lots)
-    x_count, y_count = ratio.numerator, ratio.denominator
-    scale = max(1, (max(x_count, y_count) + max_lots - 1) // max_lots)
-    return max(1, round(x_count / scale)), max(1, round(y_count / scale))
+    target_lot_ratio = qty * y_lot / x_lot
+    if abs(target_lot_ratio - 1.0) / target_lot_ratio <= 0.12:
+        return 1, 1
+
+    candidates = [
+        (
+            abs((x_count / y_count) - target_lot_ratio) / target_lot_ratio,
+            x_count + y_count,
+            max(x_count, y_count),
+            x_count,
+            y_count,
+        )
+        for x_count in range(1, max_lots + 1)
+        for y_count in range(1, max_lots + 1)
+    ]
+    acceptable = [candidate for candidate in candidates if candidate[0] <= tolerance]
+    if acceptable:
+        _, _, _, x_count, y_count = min(
+            acceptable, key=lambda candidate: (candidate[1], candidate[0], candidate[2])
+        )
+        return x_count, y_count
+
+    _, _, _, x_count, y_count = min(
+        candidates, key=lambda candidate: (candidate[0], candidate[1], candidate[2])
+    )
+    return x_count, y_count
 
 
 def _dates(start: datetime, end: datetime) -> tuple[str, str]:
@@ -97,6 +130,17 @@ def _price_series(df: pd.DataFrame, contract: Contract) -> pd.Series:
     ]
     series = rows.drop_duplicates("date", keep="last").set_index("date")["CLOSING_PRICE"]
     return series.sort_index().astype(float)
+
+
+def _snapshot_price(df: pd.DataFrame, contract: Contract, snapshot: pd.DataFrame) -> float:
+    rows = snapshot[
+        (snapshot["expiry"] == contract.expiry)
+        & (snapshot["OPTION_TYPE"] == contract.option_type)
+        & (snapshot["STRIKE_PRICE"] == contract.strike)
+    ]
+    if rows.empty:
+        raise ValueError(f"No price was available for {contract.symbol} {contract.strike} {contract.option_type}.")
+    return float(rows.iloc[0]["CLOSING_PRICE"])
 
 
 def _future_series(df: pd.DataFrame, expiry: pd.Timestamp) -> pd.Series:
@@ -181,6 +225,7 @@ def _fetch_credit_snapshot(
         "spot": float(spot_values.iloc[0]),
         "options": option_df,
         "option_snapshot": option_rows,
+        "is_index": future_type == "FUTIDX",
     }
 
 
@@ -231,9 +276,12 @@ def build_credit_spread_structure(
                 "strike": contract.strike,
                 "expiry": asset["expiry"].strftime("%d-%b-%Y"),
                 "spot": round(asset["spot"], 2),
+                "price": _snapshot_price(asset["options"], contract, asset["option_snapshot"]),
+                "is_index": asset["is_index"],
             })
 
     actual_ratio = x_lots * assets["x"]["future_lot"] / (y_lots * assets["y"]["future_lot"])
+    margin = estimate_margin(legs)
     return {
         "pair": f"{nse_symbol(x)}/{nse_symbol(y)}",
         "qty": qty,
@@ -243,6 +291,7 @@ def build_credit_spread_structure(
         "y_lots": y_lots,
         "actual_ratio": round(actual_ratio, 4),
         "legs": legs,
+        "margin": margin,
         "note": "Current structure only; prices and available strikes can change before execution.",
     }
 
@@ -277,6 +326,7 @@ def _fetch_symbol(
         "future_lot": future_lot,
         "future": _future_series(future_df, expiry),
         "spot": spot,
+        "is_index": future_type == "FUTIDX",
     }
     if strategy == "futures":
         return result
@@ -329,6 +379,7 @@ def run_derivatives_backtest(
 
     leg_series: dict[str, pd.Series] = {}
     leg_meta: list[dict] = []
+    credit_leg_prices: list[pd.Series] = []
     for key, asset in assets.items():
         sign = signs[key]
         count = lot_counts[key]
@@ -344,6 +395,8 @@ def run_derivatives_backtest(
                 "asset": key, "symbol": symbol, "instrument": "FUT",
                 "side": "BUY" if sign > 0 else "SELL", "lots": count,
                 "lot_size": future_lot, "expiry": expiry.strftime("%d-%b-%Y"),
+                "spot": asset["spot"], "price": float(future.iloc[0]),
+                "is_index": asset["is_index"],
             })
 
         if strategy == "futures_options":
@@ -357,6 +410,8 @@ def run_derivatives_backtest(
                 "asset": key, "symbol": symbol, "instrument": opt_type, "side": "BUY",
                 "lots": count, "lot_size": contract.lot_size, "strike": contract.strike,
                 "expiry": expiry.strftime("%d-%b-%Y"),
+                "spot": asset["spot"], "price": float(option.iloc[0]),
+                "is_index": asset["is_index"],
             })
 
         if strategy == "credit_spreads":
@@ -372,11 +427,16 @@ def run_derivatives_backtest(
             leg_series[f"{key}_{opt_type.lower()}_short"] = -(sold_prices - sold_prices.iloc[0]) * sold.lot_size * count
             leg_series[f"{key}_{opt_type.lower()}_hedge"] = (hedge_prices - hedge_prices.iloc[0]) * hedge.lot_size * count
             for contract, side in ((sold, "SELL"), (hedge, "BUY")):
+                contract_prices = sold_prices if side == "SELL" else hedge_prices
                 leg_meta.append({
                     "asset": key, "symbol": symbol, "instrument": opt_type, "side": side,
                     "lots": count, "lot_size": contract.lot_size, "strike": contract.strike,
                     "expiry": expiry.strftime("%d-%b-%Y"),
+                    "spot": asset["spot"],
+                    "price": float(contract_prices.iloc[0]),
+                    "is_index": asset["is_index"],
                 })
+                credit_leg_prices.append(contract_prices)
 
     pnl = pd.concat(leg_series, axis=1, join="inner").dropna()
     if pnl.empty:
@@ -386,15 +446,25 @@ def run_derivatives_backtest(
     if pnl.empty:
         raise ValueError("No common closing prices were available through contract expiry.")
     pnl["total"] = pnl.sum(axis=1)
+    margin = estimate_margin(leg_meta)
+    margin_base = margin["estimated_margin"]
+    if margin_base <= 0:
+        raise ValueError("Unable to estimate a positive entry margin for this structure.")
+    pnl["pnl_pct"] = pnl["total"] * 100.0 / margin_base
     half_life_row = pnl.iloc[min(half_life, len(pnl) - 1)]
     half_life_time = pnl.index[min(half_life, len(pnl) - 1)]
     expiry_row = pnl.iloc[-1]
     expiry_time = pnl.index[-1]
+    if strategy == "credit_spreads":
+        for leg, prices in zip(leg_meta, credit_leg_prices):
+            leg["half_life_price"] = round(float(prices.loc[half_life_time]), 2)
+            leg["expiry_price"] = round(float(prices.loc[expiry_time]), 2)
     return {
         "points": [
             {
                 "time": int(index.timestamp()),
                 "pnl": round(float(row["total"]), 2),
+                "pnl_pct": round(float(row["pnl_pct"]), 4),
                 "legs": {name: round(float(row[name]), 2) for name in leg_series},
             }
             for index, row in pnl.iterrows()
@@ -407,4 +477,7 @@ def run_derivatives_backtest(
         "half_life_max_profit": round(float(pnl.iloc[: half_life + 1]["total"].max()), 2),
         "expiry_time": int(expiry_time.timestamp()),
         "expiry_pnl": round(float(expiry_row["total"]), 2),
+        "half_life_pnl_pct": round(float(half_life_row["pnl_pct"]), 4),
+        "expiry_pnl_pct": round(float(expiry_row["pnl_pct"]), 4),
+        "margin": margin,
     }

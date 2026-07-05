@@ -116,13 +116,16 @@ async def backtest_pair(request: BacktestRequest):
             "exit_time": result["half_life_time"],
             "final_pnl": result["half_life_pnl"],
             "max_profit": result["half_life_max_profit"],
+            "final_pnl_pct": result["half_life_pnl_pct"],
             "expiry_time": result["expiry_time"],
             "expiry_pnl": result["expiry_pnl"],
+            "expiry_pnl_pct": result["expiry_pnl_pct"],
+            "margin": result["margin"],
             "points": rows,
             "legs": result["legs"],
             "x_lots": result["x_lots"],
             "y_lots": result["y_lots"],
-            "note": "Daily NSE closing prices; excludes brokerage, taxes, slippage, margin and financing costs.",
+            "note": "Daily NSE closing prices. PnL% uses a conservative estimate based on current NSE margin floors; excludes brokerage, taxes, slippage and financing costs.",
         }
 
     try:

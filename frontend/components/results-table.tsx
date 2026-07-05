@@ -494,12 +494,31 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
                                         </div>
                                     ))}
                                 </div>
+                                {structure.margin && (
+                                    <div style={{ marginTop: "12px", padding: "13px", borderRadius: "9px", border: "1px solid var(--color-border)", background: "rgba(52,211,153,0.07)" }}>
+                                        <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
+                                            <div>
+                                                <div style={{ fontSize: "9px", color: "var(--color-text-muted)", textTransform: "uppercase" }}>Estimated margin required</div>
+                                                <div style={{ marginTop: "4px", fontFamily: "var(--font-mono)", fontWeight: 800, color: "var(--color-accent-green)" }}>₹{structure.margin.estimated_margin.toFixed(2)}</div>
+                                            </div>
+                                            <div>
+                                                <div style={{ fontSize: "9px", color: "var(--color-text-muted)", textTransform: "uppercase" }}>Suggested funds (+{structure.margin.buffer_pct}%)</div>
+                                                <div style={{ marginTop: "4px", fontFamily: "var(--font-mono)", fontWeight: 800 }}>₹{structure.margin.suggested_funds.toFixed(2)}</div>
+                                            </div>
+                                        </div>
+                                        <div style={{ marginTop: "8px", color: "var(--color-text-muted)", fontSize: "10px", lineHeight: 1.6 }}>
+                                            SPAN estimate ₹{structure.margin.span_estimate.toFixed(2)} • ELM ₹{structure.margin.elm.toFixed(2)} • Premium debit ₹{structure.margin.premium_debit.toFixed(2)}
+                                            <br />{structure.margin.method}; indicative only, not an exact NSE or broker margin statement.
+                                        </div>
+                                    </div>
+                                )}
                                 <div style={{ display: "grid", gap: "9px", marginTop: "18px" }}>
                                     {structure.legs.map((leg, index) => (
                                         <div key={`${leg.asset}-${leg.side}-${index}`} style={{ padding: "12px", borderRadius: "9px", border: "1px solid var(--color-border)", fontFamily: "var(--font-mono)", fontSize: "12px" }}>
                                             <strong style={{ color: leg.side === "BUY" ? "var(--color-accent-green)" : "var(--color-accent-red)" }}>{leg.side}</strong>
                                             {" "}{leg.lots} lot{leg.lots === 1 ? "" : "s"} × {leg.lot_size} {leg.symbol} {leg.expiry} {leg.strike} {leg.instrument}
                                             <span style={{ color: "var(--color-text-muted)" }}> • spot ₹{leg.spot?.toFixed(2)}</span>
+                                            {leg.price !== undefined && <span style={{ color: "var(--color-text-muted)" }}> • option ₹{leg.price.toFixed(2)}</span>}
                                         </div>
                                     ))}
                                 </div>

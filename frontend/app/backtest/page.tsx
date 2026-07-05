@@ -130,15 +130,18 @@ function BacktestContent() {
     }, [request]);
 
     const spreadData = (result?.points || []).filter((point) => point.spread !== undefined).map((point) => ({ time: point.time as UTCTimestamp, value: point.spread! }));
+    const isDerivative = (result?.strategy || request.strategy) !== "equity";
     const pnlData = (result?.points || [])
-        .map((point) => ({ time: point.time as UTCTimestamp, value: point.pnl ?? point.pnl_pct }))
+        .map((point) => ({ time: point.time as UTCTimestamp, value: isDerivative ? point.pnl_pct : point.pnl }))
         .filter((point): point is { time: UTCTimestamp; value: number } => Number.isFinite(point.value));
     const xCloseData = (result?.points || []).filter((point) => point.x !== undefined).map((point) => ({ time: point.time as UTCTimestamp, value: point.x! }));
     const yCloseData = (result?.points || []).filter((point) => point.y !== undefined).map((point) => ({ time: point.time as UTCTimestamp, value: point.y! }));
-    const pnl = result?.final_pnl ?? result?.final_pnl_pct ?? 0;
-    const maxProfit = result?.max_profit ?? result?.max_profit_pct ?? 0;
-    const expiryPnl = result?.expiry_pnl;
-    const isDerivative = (result?.strategy || request.strategy) !== "equity";
+    const pnl = isDerivative ? (result?.final_pnl_pct ?? 0) : (result?.final_pnl ?? 0);
+    const maxProfit = isDerivative
+        ? Math.max(0, ...pnlData.map((point) => point.value))
+        : (result?.max_profit ?? result?.max_profit_pct ?? 0);
+    const expiryPnl = isDerivative ? result?.expiry_pnl_pct : result?.expiry_pnl;
+    const formatPnl = (value: number) => `${value > 0 ? "+" : ""}${isDerivative ? "" : "₹"}${value.toFixed(2)}${isDerivative ? "%" : ""}`;
     const strategyLabels = {
         equity: "Equities only",
         futures: "Futures only",
@@ -180,12 +183,17 @@ function BacktestContent() {
                         marginBottom: "18px",
                     }}>
                         {[
-                            { label: isDerivative ? "Half-Life PnL" : "Actual PnL", value: `${pnl > 0 ? "+" : ""}₹${pnl.toFixed(2)}`, color: pnl >= 0 ? "var(--color-accent-green)" : "var(--color-accent-red)" },
-                            { label: "Max Profit", value: `${maxProfit > 0 ? "+" : ""}₹${maxProfit.toFixed(2)}`, color: maxProfit >= 0 ? "var(--color-accent-green)" : "var(--color-accent-red)" },
+                            { label: isDerivative ? "Half-Life PnL" : "Actual PnL", value: formatPnl(pnl), color: pnl >= 0 ? "var(--color-accent-green)" : "var(--color-accent-red)" },
+                            { label: "Max Profit", value: formatPnl(maxProfit), color: maxProfit >= 0 ? "var(--color-accent-green)" : "var(--color-accent-red)" },
                             ...(isDerivative && expiryPnl !== undefined ? [{
                                 label: "PnL at Expiry",
-                                value: `${expiryPnl > 0 ? "+" : ""}₹${expiryPnl.toFixed(2)}`,
+                                value: `${expiryPnl > 0 ? "+" : ""}${expiryPnl.toFixed(2)}%`,
                                 color: expiryPnl >= 0 ? "var(--color-accent-green)" : "var(--color-accent-red)",
+                            }] : []),
+                            ...(isDerivative && result.margin ? [{
+                                label: "Estimated Margin",
+                                value: `₹${result.margin.estimated_margin.toFixed(2)}`,
+                                color: "var(--color-text-primary)",
                             }] : []),
                             { label: "Half-Life", value: `${result.half_life} bars`, color: "var(--color-text-primary)" },
                             { label: "Structure", value: strategyLabels[result.strategy || request.strategy], color: "var(--color-accent-cyan)" },
@@ -216,9 +224,26 @@ function BacktestContent() {
                                     <div key={`${leg.asset}-${leg.instrument}-${leg.side}-${index}`} style={{ fontFamily: "var(--font-mono)", fontSize: "11px", color: "var(--color-text-secondary)" }}>
                                         <strong style={{ color: leg.side === "BUY" ? "var(--color-accent-green)" : "var(--color-accent-red)" }}>{leg.side}</strong>
                                         {" "}{leg.lots} lot{leg.lots === 1 ? "" : "s"} × {leg.lot_size} {leg.symbol} {leg.expiry} {leg.strike ? `${leg.strike} ` : ""}{leg.instrument}
+                                        {leg.price !== undefined ? <span style={{ color: "var(--color-text-muted)" }}> • entry ₹{leg.price.toFixed(2)}</span> : null}
+                                        {leg.half_life_price !== undefined ? <span style={{ color: "var(--color-text-muted)" }}> • half-life ₹{leg.half_life_price.toFixed(2)}</span> : null}
+                                        {leg.expiry_price !== undefined ? <span style={{ color: "var(--color-text-muted)" }}> • expiry ₹{leg.expiry_price.toFixed(2)}</span> : null}
                                     </div>
                                 ))}
                             </div>
+                        </section>
+                    )}
+
+                    {isDerivative && result.margin && (
+                        <section className="glow-border" style={{ borderRadius: "14px", padding: "16px", background: "var(--color-bg-secondary)", marginBottom: "18px" }}>
+                            <h2 style={{ fontSize: "14px", fontWeight: 700, marginBottom: "8px" }}>Conservative margin estimate</h2>
+                            <div style={{ color: "var(--color-text-secondary)", fontFamily: "var(--font-mono)", fontSize: "11px", lineHeight: 1.8 }}>
+                                SPAN estimate ₹{result.margin.span_estimate.toFixed(2)} • ELM ₹{result.margin.elm.toFixed(2)} • Premium debit ₹{result.margin.premium_debit.toFixed(2)}
+                                <br />
+                                Suggested funds with {result.margin.buffer_pct}% buffer: ₹{result.margin.suggested_funds.toFixed(2)}
+                            </div>
+                            <p style={{ color: "var(--color-text-muted)", fontSize: "10px", marginTop: "7px" }}>
+                                {result.margin.method}. Applied retrospectively as the PnL% denominator; this is not an exact NSE or broker SPAN statement.
+                            </p>
                         </section>
                     )}
 
@@ -231,13 +256,13 @@ function BacktestContent() {
                         )}
                         {spreadData.length > 0 && <ChartPanel title="Spread" data={spreadData} color="#6366f1" />}
                         <ChartPanel
-                            title="Absolute PnL"
+                            title={isDerivative ? "PnL on Estimated Margin" : "Absolute PnL"}
                             data={pnlData}
                             color={pnl >= 0 ? "#34d399" : "#f87171"}
-                            valueSuffix="₹"
+                            valueSuffix={isDerivative ? "%" : "₹"}
                             headerDetail={
                                 isDerivative && expiryPnl !== undefined
-                                    ? `Half-life max: ${maxProfit > 0 ? "+" : ""}₹${maxProfit.toFixed(2)} • Amber point marks expiry: ${expiryPnl > 0 ? "+" : ""}₹${expiryPnl.toFixed(2)}`
+                                    ? `Half-life max: ${maxProfit > 0 ? "+" : ""}${maxProfit.toFixed(2)}% • Amber point marks expiry: ${expiryPnl > 0 ? "+" : ""}${expiryPnl.toFixed(2)}%`
                                     : `Max profit during period: ${maxProfit > 0 ? "+" : ""}₹${maxProfit.toFixed(2)}`
                             }
                             markerPoint={

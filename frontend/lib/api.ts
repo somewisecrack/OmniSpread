@@ -76,6 +76,21 @@ export interface BacktestLeg {
     strike?: number;
     expiry: string;
     spot?: number;
+    price?: number;
+    half_life_price?: number;
+    expiry_price?: number;
+    is_index?: boolean;
+}
+
+export interface MarginEstimate {
+    span_estimate: number;
+    elm: number;
+    premium_debit: number;
+    gross_notional: number;
+    estimated_margin: number;
+    suggested_funds: number;
+    buffer_pct: number;
+    method: string;
 }
 
 export interface CreditStructureResult {
@@ -88,6 +103,7 @@ export interface CreditStructureResult {
     y_lots?: number;
     actual_ratio?: number;
     legs?: BacktestLeg[];
+    margin?: MarginEstimate;
     note?: string;
     error?: string;
 }
@@ -110,6 +126,8 @@ export interface BacktestResult {
     max_profit_pct?: number;
     expiry_time?: number;
     expiry_pnl?: number;
+    expiry_pnl_pct?: number;
+    margin?: MarginEstimate;
     points?: BacktestPoint[];
     legs?: BacktestLeg[];
     x_lots?: number;

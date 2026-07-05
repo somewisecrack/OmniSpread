@@ -66,6 +66,12 @@ def test_whole_lot_hedge_approximates_share_ratio():
     assert x_lots * 25 / (y_lots * 10) == 1.5
 
 
+def test_whole_lot_hedge_prefers_compact_approximations():
+    assert whole_lot_hedge(10 / 13, 1, 1) == (3, 4)
+    assert whole_lot_hedge(9 / 10, 1, 1) == (1, 1)
+    assert whole_lot_hedge(0.8, 1, 1) == (4, 5)
+
+
 def test_futures_options_selects_expiry_after_exit_and_protective_options():
     result = run_derivatives_backtest(
         x="AAA.NS", y="BBB.NS", qty=1.5, direction="SHORT_SPREAD",
@@ -95,6 +101,14 @@ def test_credit_spreads_buy_hedges_are_three_strikes_further_otm():
     assert x_legs[0]["side"] == "SELL" and x_legs[0]["strike"] - x_legs[1]["strike"] == 30
     assert y_legs[0]["side"] == "SELL" and y_legs[1]["strike"] - y_legs[0]["strike"] == 30
     assert result["points"][0]["pnl"] == 0
+    assert result["points"][0]["pnl_pct"] == 0
+    assert all("half_life_price" in leg and "expiry_price" in leg for leg in result["legs"])
+    assert [leg["half_life_price"] for leg in result["legs"]] == [22.0, 22.3, 22.0, 22.3]
+    assert [leg["expiry_price"] for leg in result["legs"]] == [24.0, 24.3, 24.0, 24.3]
+    assert result["margin"]["estimated_margin"] > 0
+    assert result["half_life_pnl_pct"] == round(
+        result["half_life_pnl"] * 100 / result["margin"]["estimated_margin"], 4
+    )
 
 
 def test_current_credit_structure_uses_whole_lots_and_correct_spread_sides():
@@ -109,3 +123,5 @@ def test_current_credit_structure_uses_whole_lots_and_correct_spread_sides():
         ("x", "SELL", "PE"), ("x", "BUY", "PE"),
         ("y", "SELL", "CE"), ("y", "BUY", "CE"),
     ]
+    assert result["margin"]["estimated_margin"] > 0
+    assert result["margin"]["suggested_funds"] > result["margin"]["estimated_margin"]
