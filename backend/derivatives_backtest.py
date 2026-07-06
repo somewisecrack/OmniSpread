@@ -216,7 +216,12 @@ def _fetch_credit_snapshot(
     if spot_values.empty:
         spot_values = option_rows["UNDERLYING_VALUE"].dropna()
     if spot_values.empty:
-        raise ValueError(f"No underlying spot value was available for {symbol}.")
+        # NSElib occasionally leaves UNDERLYING_VALUE blank for otherwise valid
+        # stock-derivative snapshots. The nearest-month futures close is the
+        # best available proxy for selecting nearby strikes in that case.
+        spot_values = future_rows["CLOSING_PRICE"].dropna()
+    if spot_values.empty:
+        raise ValueError(f"No underlying or futures reference price was available for {symbol}.")
     return {
         "symbol": symbol,
         "expiry": expiry,

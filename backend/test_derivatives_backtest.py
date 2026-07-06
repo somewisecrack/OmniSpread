@@ -60,6 +60,18 @@ def _fetch_option(**kwargs):
     return _option_frame("BBB", 10, 200)
 
 
+def _fetch_future_without_underlying(**kwargs):
+    frame = _fetch_future(**kwargs)
+    frame["UNDERLYING_VALUE"] = None
+    return frame
+
+
+def _fetch_option_without_underlying(**kwargs):
+    frame = _fetch_option(**kwargs)
+    frame["UNDERLYING_VALUE"] = None
+    return frame
+
+
 def test_whole_lot_hedge_approximates_share_ratio():
     x_lots, y_lots = whole_lot_hedge(1.5, 25, 10)
     assert (x_lots, y_lots) == (3, 5)
@@ -125,3 +137,14 @@ def test_current_credit_structure_uses_whole_lots_and_correct_spread_sides():
     ]
     assert result["margin"]["estimated_margin"] > 0
     assert result["margin"]["suggested_funds"] > result["margin"]["estimated_margin"]
+
+
+def test_current_credit_structure_falls_back_to_futures_close_when_spot_is_missing():
+    result = build_credit_spread_structure(
+        x="AAA.NS", y="BBB.NS", qty=1.5, direction="SHORT_SPREAD",
+        fetch_future=_fetch_future_without_underlying,
+        fetch_option=_fetch_option_without_underlying,
+        as_of_date=pd.Timestamp("2026-06-30").to_pydatetime(),
+    )
+    assert [leg["spot"] for leg in result["legs"] if leg["asset"] == "x"] == [104.0, 104.0]
+    assert [leg["spot"] for leg in result["legs"] if leg["asset"] == "y"] == [204.0, 204.0]
