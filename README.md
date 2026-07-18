@@ -62,37 +62,47 @@ Requirements are pinned to the versions verified on **Python 3.14.0**. Use
 `.venv/bin/python` (or `.venv/bin/pip`) for every backend command — `pip3` and
 `python3` may resolve elsewhere.
 
-### NSE data availability
+### NSE data availability — requires an India-presenting IP
 
-Futures, options and credit-spread features read NSE via `nselib`. NSE fronts its
-API with Akamai Bot Manager, which fingerprints the **TLS handshake** — not just
-the headers. `nselib` uses plain `requests`, whose handshake is not Chrome's, so
-Akamai now answers it with `403 Access Denied` regardless of how browser-like the
-headers are. This is a change on NSE's side; the same code worked previously.
+Futures, options and credit-spread features read NSE via `nselib`. **NSE
+geo-restricts its API behind Akamai.** From an address Akamai does not accept,
+requests are refused with an `Access Denied` page or simply left to hang, and
+these features stop working. Nothing in this repo can bypass that — it is the
+single most common cause of "futures and options suddenly stopped working".
 
-`backend/nse_client.py` therefore routes nselib's HTTP through `curl_cffi`, which
-reproduces Chrome's handshake. Measured against the same endpoint:
+**If derivatives features fail, check the egress IP first.** A VPN with an
+Indian exit restores them immediately.
 
-| Transport | `nseindia.com` |
-|-----------|----------------|
-| `requests` (nselib default) | `403 Forbidden` |
-| `curl_cffi` Chrome handshake | `200 OK` |
+Beware that geolocation databases disagree about VPN endpoints. The same address
+has been observed reported as both `London, GB` (ipinfo.io) and
+`Chennai, IN` (ip-api.com). Do not conclude anything from a single lookup —
+what matters is whether NSE serves it:
 
-To fall back to nselib's own transport:
+```bash
+cd backend && .venv/bin/python -c "
+import nse_client
+print(nse_client.fetch_future(symbol='TECHM', instrument='FUTSTK', period='1M').shape)"
+```
+
+Equity scanning and equity backtests use Yahoo Finance and are unaffected by all
+of this.
+
+#### TLS transport (secondary)
+
+Separately, a bare `GET https://www.nseindia.com/` is answered with `403` for
+plain `requests` (nselib's transport) but `200` for a Chrome TLS handshake, so
+`backend/nse_client.py` routes nselib's HTTP through `curl_cffi`.
+
+This is defence in depth, **not** the fix for the geo block: from an accepted IP,
+nselib's own transport reaches the data endpoints perfectly well. To disable:
 
 ```bash
 export OMNISPREAD_NSE_TRANSPORT=requests
 ```
 
-**Remaining limitation.** Passing the TLS check is necessary but not always
-sufficient. Akamai also issues an `_abck` cookie that is only *validated* by
-executing its JavaScript sensor, and the heavier historical-data endpoints are
-gated on it. From a blocked network those endpoints still stall, and the call
-fails in about 15 seconds with a clear message rather than hanging:
-
-> NSE returned a non-JSON response (usually an Akamai 'Access Denied' page).
-
-Equity scanning and equity backtests use Yahoo Finance and are unaffected.
+`nse_client` also bounds every NSE call at 15 seconds. Without it a stalled edge
+would hang the request until the frontend proxy reset the connection, surfacing
+in the browser as a misleading "Internal Server Error".
 
 ## CLI
 
