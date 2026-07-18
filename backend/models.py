@@ -19,6 +19,9 @@ class BacktestRequest(BaseModel):
     half_life: int
     end_date: str
     strategy: Literal["equity", "futures", "futures_options", "credit_spreads"] = "equity"
+    strike_rule: Literal["legacy", "vol"] = "legacy"
+    sold_sd: float = 1.0
+    hedge_sd: float = 1.75
 
 
 class CreditStructureRequest(BaseModel):
@@ -26,6 +29,9 @@ class CreditStructureRequest(BaseModel):
     y: str
     qty: float
     direction: str
+    strike_rule: Literal["legacy", "vol"] = "legacy"
+    sold_sd: float = 1.0
+    hedge_sd: float = 1.75
 
 
 class PairResult(BaseModel):

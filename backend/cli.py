@@ -143,6 +143,7 @@ def cmd_backtest(args):
                 x=args.x, y=args.y, qty=args.qty, direction=args.direction,
                 half_life=args.half_life, end_date=args.end_date,
                 strategy=strat, interval=args.interval,
+                strike_rule=args.strike_rule, sold_sd=args.sold_sd, hedge_sd=args.hedge_sd,
             )
             rows.append({
                 "strategy": strat,
@@ -242,6 +243,13 @@ def build_parser():
                       help="Strategy to run, or 'all' for every type (default: all)")
     p_bt.add_argument("--json", nargs="?", const="-", metavar="FILE",
                       help="Output JSON instead of a table")
+    p_bt.add_argument("--strike-rule", default="legacy", choices=["legacy", "vol"],
+                      help="Credit-spread strike selection: 'legacy' = 2%% OTM + 3 strikes; "
+                           "'vol' = scaled to the ATM-straddle expected move (default: legacy)")
+    p_bt.add_argument("--sold-sd", type=float, default=1.0,
+                      help="Sold strike distance in expected moves, --strike-rule vol (default: 1.0)")
+    p_bt.add_argument("--hedge-sd", type=float, default=1.75,
+                      help="Hedge strike distance in expected moves, --strike-rule vol (default: 1.75)")
     p_bt.set_defaults(func=cmd_backtest)
 
     return parser

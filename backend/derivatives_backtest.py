@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Callable
@@ -10,6 +11,21 @@ from margin_estimator import estimate_margin
 
 FetchFuture = Callable[..., pd.DataFrame]
 FetchOption = Callable[..., pd.DataFrame]
+
+# Credit-spread strike selection rules.
+#   legacy - sold strike a flat 2% OTM, hedge three listed strikes further out.
+#   vol    - strikes placed in units of the expected move implied by the ATM
+#            straddle, so risk is scaled to volatility and time rather than to
+#            whatever strike spacing the exchange happens to list.
+STRIKE_RULE_LEGACY = "legacy"
+STRIKE_RULE_VOL = "vol"
+DEFAULT_SOLD_SD = 1.0
+DEFAULT_HEDGE_SD = 1.75
+
+# An ATM straddle is worth about S*sigma*sqrt(T)*sqrt(2/pi) - the mean absolute
+# move - so the one-standard-deviation move is straddle / sqrt(2/pi).
+STRADDLE_TO_SD = 1.0 / math.sqrt(2.0 / math.pi)
+RISK_FREE_RATE = 0.065
 
 
 @dataclass(frozen=True)
@@ -91,7 +107,8 @@ def _clean(df: pd.DataFrame) -> pd.DataFrame:
     result = df.copy()
     result["date"] = pd.to_datetime(result["TIMESTAMP"], format="%d-%b-%Y")
     result["expiry"] = pd.to_datetime(result["EXPIRY_DT"], format="%d-%b-%Y")
-    for column in ("CLOSING_PRICE", "STRIKE_PRICE", "MARKET_LOT", "UNDERLYING_VALUE"):
+    for column in ("CLOSING_PRICE", "STRIKE_PRICE", "MARKET_LOT", "UNDERLYING_VALUE",
+                   "TOT_TRADED_QTY"):
         if column in result:
             result[column] = pd.to_numeric(result[column], errors="coerce")
     return result.sort_values("date")
@@ -184,6 +201,147 @@ def _choose_option(
     )
 
 
+def _atm_expected_move(entry: pd.DataFrame, spot: float, expiry: pd.Timestamp) -> float:
+    """One-standard-deviation move to expiry, read off the ATM straddle.
+
+    Using the straddle means no volatility, tenor or rate input is needed - the
+    traded option prices already embed them.
+
+    NSE publishes a settlement price for strikes that never traded, so a stale
+    leg can inflate the straddle badly. When exactly one side of the ATM pair
+    traded, the other is rebuilt from put-call parity instead of trusted.
+    """
+    rows = entry[entry["STRIKE_PRICE"].notna()]
+    if rows.empty:
+        raise ValueError("No option strikes were available to size the expected move.")
+    strikes = sorted(float(value) for value in rows["STRIKE_PRICE"].unique())
+    atm = min(strikes, key=lambda strike: abs(strike - spot))
+
+    as_of = pd.Timestamp(rows["date"].min())
+    years = max((expiry - as_of).days, 1) / 365.0
+    # Put-call parity: C - P = S - K*exp(-rT)
+    forward_gap = spot - atm * math.exp(-RISK_FREE_RATE * years)
+
+    def leg(option_type: str) -> tuple[float | None, float]:
+        match = rows[(rows["STRIKE_PRICE"] == atm) & (rows["OPTION_TYPE"] == option_type)]
+        if match.empty:
+            return None, 0.0
+        row = match.iloc[0]
+        volume = pd.to_numeric(row.get("TOT_TRADED_QTY"), errors="coerce")
+        return float(row["CLOSING_PRICE"]), float(0.0 if pd.isna(volume) else volume)
+
+    call, call_volume = leg("CE")
+    put, put_volume = leg("PE")
+    if call is None and put is None:
+        raise ValueError(f"No ATM option was available at strike {atm:g} to size the expected move.")
+    if call is None:
+        call = put + forward_gap
+    elif put is None:
+        put = call - forward_gap
+    elif call_volume <= 0 < put_volume:
+        call = put + forward_gap
+    elif put_volume <= 0 < call_volume:
+        put = call - forward_gap
+
+    straddle = float(call) + float(put)
+    if straddle <= 0:
+        raise ValueError("The ATM straddle priced at or below zero; cannot size the expected move.")
+    return straddle * STRADDLE_TO_SD
+
+
+def _choose_option_by_move(
+    option_df: pd.DataFrame,
+    expiry: pd.Timestamp,
+    option_type: str,
+    spot: float,
+    sd_multiple: float,
+    expected_move: float,
+    snapshot: pd.DataFrame | None = None,
+) -> Contract:
+    """Pick the listed strike closest to `sd_multiple` expected moves OTM."""
+    entry = snapshot if snapshot is not None else _entry_rows(option_df, expiry)
+    entry = entry[(entry["OPTION_TYPE"] == option_type) & entry["STRIKE_PRICE"].notna()]
+    strikes = sorted(float(value) for value in entry["STRIKE_PRICE"].unique())
+    if not strikes:
+        raise ValueError(f"No {option_type} strikes were available for {expiry.strftime('%d-%b-%Y')}.")
+
+    away = -1.0 if option_type == "PE" else 1.0
+    target = spot + away * sd_multiple * expected_move
+    strike = min(strikes, key=lambda value: abs(value - target))
+    row = entry[entry["STRIKE_PRICE"] == strike].iloc[0]
+    return Contract(
+        symbol=str(row["SYMBOL"]),
+        expiry=expiry,
+        strike=strike,
+        option_type=option_type,
+        lot_size=int(row["MARKET_LOT"]),
+    )
+
+
+def _step_strike(
+    option_df: pd.DataFrame,
+    expiry: pd.Timestamp,
+    option_type: str,
+    contract: Contract,
+    snapshot: pd.DataFrame | None = None,
+) -> Contract:
+    """Return the next listed strike one step further OTM than `contract`."""
+    entry = snapshot if snapshot is not None else _entry_rows(option_df, expiry)
+    entry = entry[(entry["OPTION_TYPE"] == option_type) & entry["STRIKE_PRICE"].notna()]
+    strikes = sorted(float(value) for value in entry["STRIKE_PRICE"].unique())
+    index = strikes.index(contract.strike) + (-1 if option_type == "PE" else 1)
+    if index < 0 or index >= len(strikes):
+        raise ValueError(
+            "The volatility-scaled hedge collapsed onto the sold strike and the "
+            "option chain has no further strike to step to."
+        )
+    strike = strikes[index]
+    row = entry[entry["STRIKE_PRICE"] == strike].iloc[0]
+    return Contract(
+        symbol=str(row["SYMBOL"]),
+        expiry=expiry,
+        strike=strike,
+        option_type=option_type,
+        lot_size=int(row["MARKET_LOT"]),
+    )
+
+
+def _credit_spread_contracts(
+    option_df: pd.DataFrame,
+    expiry: pd.Timestamp,
+    option_type: str,
+    spot: float,
+    *,
+    strike_rule: str = STRIKE_RULE_LEGACY,
+    sold_sd: float = DEFAULT_SOLD_SD,
+    hedge_sd: float = DEFAULT_HEDGE_SD,
+    snapshot: pd.DataFrame | None = None,
+) -> tuple[Contract, Contract]:
+    """Return the (sold, hedge) contracts for one leg of a credit spread."""
+    if strike_rule == STRIKE_RULE_VOL:
+        entry = snapshot if snapshot is not None else _entry_rows(option_df, expiry)
+        move = _atm_expected_move(entry, spot, expiry)
+        sold = _choose_option_by_move(
+            option_df, expiry, option_type, spot, sold_sd, move, snapshot=snapshot
+        )
+        hedge = _choose_option_by_move(
+            option_df, expiry, option_type, spot, hedge_sd, move, snapshot=snapshot
+        )
+        if hedge.strike == sold.strike:
+            # A coarse ladder can collapse both legs onto one strike; step the
+            # hedge one listed strike further OTM so the spread still has width.
+            hedge = _step_strike(option_df, expiry, option_type, sold, snapshot=snapshot)
+        return sold, hedge
+
+    offset = -0.02 if option_type == "PE" else 0.02
+    hedge_steps = -3 if option_type == "PE" else 3
+    sold = _choose_option(option_df, expiry, option_type, spot, offset, snapshot=snapshot)
+    hedge = _choose_option(
+        option_df, expiry, option_type, spot, offset, hedge_steps, snapshot=snapshot
+    )
+    return sold, hedge
+
+
 def _fetch_credit_snapshot(
     ticker: str,
     start: datetime,
@@ -243,6 +401,9 @@ def build_credit_spread_structure(
     fetch_future: FetchFuture,
     fetch_option: FetchOption,
     as_of_date: datetime | None = None,
+    strike_rule: str = STRIKE_RULE_LEGACY,
+    sold_sd: float = DEFAULT_SOLD_SD,
+    hedge_sd: float = DEFAULT_HEDGE_SD,
 ) -> dict:
     as_of = as_of_date or datetime.now()
     start = as_of - timedelta(days=14)
@@ -259,15 +420,10 @@ def build_credit_spread_structure(
 
     for key, asset in assets.items():
         option_type = "PE" if signs[key] > 0 else "CE"
-        offset = -0.02 if option_type == "PE" else 0.02
-        hedge_steps = -3 if option_type == "PE" else 3
-        sold = _choose_option(
-            asset["options"], asset["expiry"], option_type, asset["spot"], offset,
+        sold, hedge = _credit_spread_contracts(
+            asset["options"], asset["expiry"], option_type, asset["spot"],
+            strike_rule=strike_rule, sold_sd=sold_sd, hedge_sd=hedge_sd,
             snapshot=asset["option_snapshot"],
-        )
-        hedge = _choose_option(
-            asset["options"], asset["expiry"], option_type, asset["spot"], offset,
-            hedge_steps, snapshot=asset["option_snapshot"],
         )
         count = lot_counts[key]
         for contract, side in ((sold, "SELL"), (hedge, "BUY")):
@@ -361,6 +517,9 @@ def run_derivatives_backtest(
     strategy: str,
     fetch_future: FetchFuture,
     fetch_option: FetchOption,
+    strike_rule: str = STRIKE_RULE_LEGACY,
+    sold_sd: float = DEFAULT_SOLD_SD,
+    hedge_sd: float = DEFAULT_HEDGE_SD,
 ) -> dict:
     start = datetime.strptime(end_date, "%Y-%m-%d")
     # Half-life is measured in daily trading bars for derivatives.
@@ -421,11 +580,9 @@ def run_derivatives_backtest(
 
         if strategy == "credit_spreads":
             opt_type = "PE" if sign > 0 else "CE"
-            offset = -0.02 if opt_type == "PE" else 0.02
-            hedge_steps = -3 if opt_type == "PE" else 3
-            sold = _choose_option(asset["options"], expiry, opt_type, asset["spot"], offset)
-            hedge = _choose_option(
-                asset["options"], expiry, opt_type, asset["spot"], offset, hedge_steps
+            sold, hedge = _credit_spread_contracts(
+                asset["options"], expiry, opt_type, asset["spot"],
+                strike_rule=strike_rule, sold_sd=sold_sd, hedge_sd=hedge_sd,
             )
             sold_prices = _price_series(asset["options"], sold)
             hedge_prices = _price_series(asset["options"], hedge)

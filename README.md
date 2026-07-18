@@ -100,8 +100,40 @@ python3 cli.py backtest --x ITC.NS --y DRREDDY.NS --qty 3.0 \
 | `--strategy` | `all` (default), `equity`, `futures`, `futures_options`, or `credit_spreads` |
 | `--interval` | Bar interval — equity only; derivatives are daily |
 | `--json [FILE]` | Output JSON instead of a table |
+| `--strike-rule` | Credit-spread strikes: `legacy` (default) or `vol` |
+| `--sold-sd` / `--hedge-sd` | Strike distance in expected moves (`vol` rule only) |
 
 > Equity P&L is per share; futures/options/credit-spread P&L is per whole-lot hedge (much larger notional). Derivatives strategies require `nselib` and NSE daily data.
+
+### Credit-spread strike selection
+
+Two rules are available, selected with `--strike-rule` (API: `strike_rule`):
+
+| Rule | Sold strike | Hedge strike |
+|------|-------------|--------------|
+| `legacy` (default) | flat 2% OTM | three *listed strikes* further OTM |
+| `vol` | `--sold-sd` expected moves OTM (default 1.0) | `--hedge-sd` expected moves OTM (default 1.75) |
+
+The `vol` rule sizes strikes by the **expected move implied by the ATM straddle**. Since an ATM
+straddle is worth about `S·σ·√T·√(2/π)`, the one-standard-deviation move is `straddle × 1.2533` —
+so no volatility, tenor or rate input is required; the traded option prices already embed them.
+
+Why it exists: a flat 2% offset ignores volatility and time. On a two-month option at ~27% vol it
+lands only ~0.16 SD out (a ~57% chance of finishing ITM), and the legacy hedge width depends on
+whatever strike spacing the exchange happens to list — the same rule can produce 3x different max
+loss on the same name. The `vol` rule makes both the distance and the wing width scale with
+volatility and tenor, so risk is intentional and comparable across pairs and dates.
+
+NSE publishes a settlement price for strikes that never traded, which can badly inflate the
+straddle. When only one side of the ATM pair has traded volume, the other is rebuilt from
+put-call parity rather than trusted.
+
+```bash
+python3 cli.py backtest --x INFY.NS --y TECHM.NS --qty 1.31 \
+    --half-life 11 --end-date 2025-06-06 --strategy credit_spreads --strike-rule vol
+```
+
+`legacy` remains the default everywhere, so existing behaviour is unchanged unless opted in.
 
 ## How It Works
 

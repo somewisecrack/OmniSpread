@@ -11,7 +11,12 @@ from datetime import datetime, timedelta
 import pandas as pd
 import yfinance as yf
 
-from derivatives_backtest import run_derivatives_backtest
+from derivatives_backtest import (
+    DEFAULT_HEDGE_SD,
+    DEFAULT_SOLD_SD,
+    STRIKE_RULE_LEGACY,
+    run_derivatives_backtest,
+)
 
 
 def backtest_calendar_days(interval: str, half_life: int) -> int:
@@ -95,7 +100,10 @@ def run_equity_backtest(*, x: str, y: str, qty: float, direction: str,
 
 
 def run_backtest(*, x: str, y: str, qty: float, direction: str, half_life: int,
-                 end_date: str, strategy: str = "equity", interval: str = "1d") -> dict:
+                 end_date: str, strategy: str = "equity", interval: str = "1d",
+                 strike_rule: str = STRIKE_RULE_LEGACY,
+                 sold_sd: float = DEFAULT_SOLD_SD,
+                 hedge_sd: float = DEFAULT_HEDGE_SD) -> dict:
     """Dispatch to the right strategy. Returns a normalized result dict.
 
     Common keys across strategies: strategy, entry_time, exit_time, final_pnl,
@@ -123,6 +131,7 @@ def run_backtest(*, x: str, y: str, qty: float, direction: str, half_life: int,
         end_date=end_date, strategy=strategy,
         fetch_future=derivatives.future_price_volume_data,
         fetch_option=derivatives.option_price_volume_data,
+        strike_rule=strike_rule, sold_sd=sold_sd, hedge_sd=hedge_sd,
     )
     rows = result["points"]
     return {

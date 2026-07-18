@@ -65,6 +65,9 @@ async def credit_spread_structure(request: CreditStructureRequest):
             direction=request.direction,
             fetch_future=derivatives.future_price_volume_data,
             fetch_option=derivatives.option_price_volume_data,
+            strike_rule=request.strike_rule,
+            sold_sd=request.sold_sd,
+            hedge_sd=request.hedge_sd,
         )
         return {"status": "completed", **result}
     except Exception as exc:
@@ -96,6 +99,9 @@ async def backtest_pair(request: BacktestRequest):
                 strategy=request.strategy,
                 fetch_future=derivatives.future_price_volume_data,
                 fetch_option=derivatives.option_price_volume_data,
+                strike_rule=request.strike_rule,
+                sold_sd=request.sold_sd,
+                hedge_sd=request.hedge_sd,
             )
         except Exception as exc:
             logger.exception("Derivatives backtest failed")

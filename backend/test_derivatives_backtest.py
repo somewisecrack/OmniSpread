@@ -1,6 +1,9 @@
 import pandas as pd
 
 from derivatives_backtest import (
+    STRIKE_RULE_VOL,
+    _clean,
+    _credit_spread_contracts,
     build_credit_spread_structure,
     run_derivatives_backtest,
     whole_lot_hedge,
@@ -137,6 +140,86 @@ def test_current_credit_structure_uses_whole_lots_and_correct_spread_sides():
     ]
     assert result["margin"]["estimated_margin"] > 0
     assert result["margin"]["suggested_funds"] > result["margin"]["estimated_margin"]
+
+
+VOL_SPOT = 1000.0
+VOL_EXPIRY = "01-Jul-2026"   # 30 days after the entry date below
+VOL_ENTRY = "01-Jun-2026"
+
+
+def _vol_option_frame(atm_call: float = 30.0, atm_call_volume: float = 500.0) -> pd.DataFrame:
+    """Chain with a realistic ~6%-of-spot ATM straddle and a 20-point ladder."""
+    rows = []
+    for strike in range(700, 1301, 20):
+        for option_type in ("PE", "CE"):
+            distance = abs(strike - VOL_SPOT)
+            price = max(30.0 - distance * 0.02, 1.0)
+            volume = 500.0
+            if strike == VOL_SPOT and option_type == "CE":
+                price, volume = atm_call, atm_call_volume
+            rows.append({
+                "TIMESTAMP": VOL_ENTRY,
+                "EXPIRY_DT": VOL_EXPIRY,
+                "SYMBOL": "AAA",
+                "OPTION_TYPE": option_type,
+                "STRIKE_PRICE": strike,
+                "CLOSING_PRICE": price,
+                "UNDERLYING_VALUE": VOL_SPOT,
+                "MARKET_LOT": 25,
+                "TOT_TRADED_QTY": volume,
+            })
+    return _clean(pd.DataFrame(rows))
+
+
+def test_vol_strike_rule_places_strikes_in_expected_move_units():
+    # ATM straddle 30 + 30 = 60 -> 1 SD move = 60 * 1.2533 = 75.2
+    # PE sold  ~ 1000 - 75.2  = 924.8 -> nearest listed strike 920
+    # PE hedge ~ 1000 - 131.6 = 868.4 -> nearest listed strike 860
+    options = _vol_option_frame()
+    expiry = pd.Timestamp(VOL_EXPIRY)
+    sold, hedge = _credit_spread_contracts(
+        options, expiry, "PE", VOL_SPOT, strike_rule=STRIKE_RULE_VOL,
+    )
+    assert (sold.strike, hedge.strike) == (920.0, 860.0)
+
+    sold_ce, hedge_ce = _credit_spread_contracts(
+        options, expiry, "CE", VOL_SPOT, strike_rule=STRIKE_RULE_VOL,
+    )
+    assert (sold_ce.strike, hedge_ce.strike) == (1080.0, 1140.0)
+
+
+def test_vol_strike_rule_widens_with_a_larger_straddle():
+    """A richer ATM straddle must push both strikes further out."""
+    calm = _vol_option_frame()
+    stormy = _vol_option_frame(atm_call=60.0)  # straddle 90 instead of 60
+    expiry = pd.Timestamp(VOL_EXPIRY)
+    calm_sold, _ = _credit_spread_contracts(
+        calm, expiry, "PE", VOL_SPOT, strike_rule=STRIKE_RULE_VOL)
+    storm_sold, _ = _credit_spread_contracts(
+        stormy, expiry, "PE", VOL_SPOT, strike_rule=STRIKE_RULE_VOL)
+    assert storm_sold.strike < calm_sold.strike
+
+
+def test_vol_strike_rule_repairs_a_stale_atm_leg_via_put_call_parity():
+    """An untraded ATM call must not inflate the expected move.
+
+    A stale 200.0 call would imply a 230 straddle (1 SD = 288) and drag the
+    sold put down to ~720. Parity repair rebuilds the call from the traded put,
+    keeping the sold strike at 920.
+    """
+    options = _vol_option_frame(atm_call=200.0, atm_call_volume=0.0)
+    sold, _ = _credit_spread_contracts(
+        options, pd.Timestamp(VOL_EXPIRY), "PE", VOL_SPOT, strike_rule=STRIKE_RULE_VOL,
+    )
+    assert sold.strike == 920.0
+
+
+def test_legacy_strike_rule_is_the_default_and_unchanged():
+    options = _vol_option_frame()
+    expiry = pd.Timestamp(VOL_EXPIRY)
+    sold, hedge = _credit_spread_contracts(options, expiry, "PE", VOL_SPOT)
+    # 2% OTM -> 980, hedge three listed 20-point strikes further out -> 920
+    assert (sold.strike, hedge.strike) == (980.0, 920.0)
 
 
 def test_current_credit_structure_falls_back_to_futures_close_when_spot_is_missing():
