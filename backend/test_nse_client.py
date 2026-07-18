@@ -55,16 +55,40 @@ def test_request_timeout_restores_the_original_after_an_exception():
 
 
 def _patch_nselib(monkeypatch, future=None, option=None):
-    """Install a stub `nselib.derivatives` so no real request is ever made."""
+    """Install a stub `nselib` package so no real request is ever made.
+
+    The stub mirrors the real layout (`nselib.libutil`, `nselib.derivatives.get_func`,
+    each exposing `nse_urlfetch`) so the Chrome-transport patching is exercised
+    rather than skipped.
+    """
+    import sys
     import types
 
-    derivatives = types.SimpleNamespace(
-        future_price_volume_data=future or (lambda **kw: pd.DataFrame()),
-        option_price_volume_data=option or (lambda **kw: pd.DataFrame()),
-    )
+    def sentinel(url, origin_url="http://nseindia.com"):
+        raise AssertionError("the stub transport must never be called")
+
+    libutil = types.ModuleType("nselib.libutil")
+    libutil.nse_urlfetch = sentinel
+    get_func = types.ModuleType("nselib.derivatives.get_func")
+    get_func.nse_urlfetch = sentinel
+
+    derivatives = types.ModuleType("nselib.derivatives")
+    derivatives.get_func = get_func
+    derivatives.future_price_volume_data = future or (lambda **kw: pd.DataFrame())
+    derivatives.option_price_volume_data = option or (lambda **kw: pd.DataFrame())
+
     module = types.ModuleType("nselib")
+    module.libutil = libutil
     module.derivatives = derivatives
-    monkeypatch.setitem(__import__("sys").modules, "nselib", module)
+
+    for name, mod in [
+        ("nselib", module),
+        ("nselib.libutil", libutil),
+        ("nselib.derivatives", derivatives),
+        ("nselib.derivatives.get_func", get_func),
+    ]:
+        monkeypatch.setitem(sys.modules, name, mod)
+    return libutil, get_func, sentinel
 
 
 def test_fetch_future_returns_the_frame_on_success(monkeypatch):
@@ -103,6 +127,45 @@ def test_unexpected_errors_keep_their_own_message(monkeypatch):
     with pytest.raises(NseUnavailable) as excinfo:
         fetch_future(symbol="NIFTY", instrument="FUTIDX")
     assert "SYMBOL" in str(excinfo.value)
+
+
+def test_chrome_transport_rebinds_both_modules_and_restores_them(monkeypatch):
+    """nselib does `from libutil import *`, so both names must be rebound."""
+    libutil, get_func, sentinel = _patch_nselib(monkeypatch)
+    with nse_client.chrome_transport():
+        assert libutil.nse_urlfetch is nse_client._chrome_urlfetch
+        assert get_func.nse_urlfetch is nse_client._chrome_urlfetch
+    assert libutil.nse_urlfetch is sentinel
+    assert get_func.nse_urlfetch is sentinel
+
+
+def test_chrome_transport_restores_after_an_exception(monkeypatch):
+    libutil, get_func, sentinel = _patch_nselib(monkeypatch)
+    with pytest.raises(RuntimeError):
+        with nse_client.chrome_transport():
+            raise RuntimeError("boom")
+    assert libutil.nse_urlfetch is sentinel
+    assert get_func.nse_urlfetch is sentinel
+
+
+def test_chrome_transport_can_be_disabled_by_env(monkeypatch):
+    libutil, get_func, sentinel = _patch_nselib(monkeypatch)
+    monkeypatch.setattr(nse_client, "USE_CHROME_TRANSPORT", False)
+    with nse_client.chrome_transport():
+        assert libutil.nse_urlfetch is sentinel  # left alone
+
+
+def test_chrome_transport_degrades_when_nselib_internals_are_absent(monkeypatch):
+    """A layout change upstream must not break the call."""
+    import sys
+    import types
+
+    bare = types.ModuleType("nselib")
+    monkeypatch.setitem(sys.modules, "nselib", bare)
+    for name in ["nselib.libutil", "nselib.derivatives", "nselib.derivatives.get_func"]:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    with nse_client.chrome_transport():
+        pass  # must not raise
 
 
 def test_guard_applies_the_module_timeout(monkeypatch):

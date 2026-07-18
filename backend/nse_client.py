@@ -18,6 +18,7 @@ when the real cause is an edge block, so that case is re-labelled here.
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import contextmanager
 
 import requests
@@ -27,6 +28,84 @@ logger = logging.getLogger("OmniSpread.nse")
 # NSE either answers quickly or not at all; a short ceiling keeps a blocked
 # edge from occupying a worker.
 DEFAULT_TIMEOUT_SECONDS = 15.0
+
+# NSE sits behind Akamai, which fingerprints the TLS handshake. nselib uses
+# plain `requests`, whose handshake is not Chrome's, and Akamai now answers it
+# with 403 no matter how browser-like the headers are. curl_cffi reproduces
+# Chrome's handshake and is admitted. Set OMNISPREAD_NSE_TRANSPORT=requests to
+# fall back to nselib's own transport.
+NSE_HOME = "https://www.nseindia.com/"
+IMPERSONATE = "chrome"
+USE_CHROME_TRANSPORT = os.environ.get("OMNISPREAD_NSE_TRANSPORT", "chrome") != "requests"
+
+_session = None
+
+
+def _chrome_session(refresh: bool = False):
+    """A curl_cffi session carrying Akamai's cookies, created once and reused."""
+    global _session
+    if _session is not None and not refresh:
+        return _session
+    from curl_cffi import requests as curl_requests
+
+    session = curl_requests.Session(impersonate=IMPERSONATE)
+    # The bot-manager cookies (_abck, ak_bmsc, bm_sz) are only issued to a
+    # client that loads the site itself first.
+    session.get(NSE_HOME, timeout=DEFAULT_TIMEOUT_SECONDS)
+    _session = session
+    return session
+
+
+def _chrome_urlfetch(url, origin_url="http://nseindia.com"):
+    """Drop-in replacement for nselib.libutil.nse_urlfetch."""
+    session = _chrome_session()
+    referer = origin_url if origin_url.startswith("https://") else NSE_HOME
+    try:
+        session.get(referer, headers={"Referer": NSE_HOME}, timeout=DEFAULT_TIMEOUT_SECONDS)
+    except Exception:  # noqa: BLE001 - priming is best-effort
+        logger.debug("Referer prime failed for %s", referer)
+    return session.get(
+        url,
+        headers={
+            "Referer": referer,
+            "Accept": "*/*",
+            "X-Requested-With": "XMLHttpRequest",
+        },
+        timeout=DEFAULT_TIMEOUT_SECONDS,
+    )
+
+
+@contextmanager
+def chrome_transport():
+    """Route nselib's HTTP through a Chrome-fingerprinted client.
+
+    nselib does `from nselib.libutil import *`, so the name has to be rebound in
+    each module that imported it, not just on libutil.
+    """
+    if not USE_CHROME_TRANSPORT:
+        yield
+        return
+
+    try:
+        from nselib import libutil
+        from nselib.derivatives import get_func
+    except ImportError:
+        # Patching is an enhancement, not a requirement: if nselib's internals
+        # move, fall back to its own transport rather than failing the call.
+        logger.debug("nselib internals not patchable; using its own transport")
+        yield
+        return
+
+    targets = [libutil, get_func]
+    originals = [getattr(module, "nse_urlfetch", None) for module in targets]
+    for module in targets:
+        module.nse_urlfetch = _chrome_urlfetch
+    try:
+        yield
+    finally:
+        for module, original in zip(targets, originals):
+            if original is not None:
+                module.nse_urlfetch = original
 
 
 class NseUnavailable(RuntimeError):
@@ -68,7 +147,7 @@ def _describe(exc: Exception) -> str:
 
 
 def _guard(call, /, **kwargs):
-    with request_timeout():
+    with request_timeout(), chrome_transport():
         try:
             return call(**kwargs)
         except Exception as exc:  # noqa: BLE001 - deliberately collapsed

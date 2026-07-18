@@ -65,14 +65,34 @@ Requirements are pinned to the versions verified on **Python 3.14.0**. Use
 ### NSE data availability
 
 Futures, options and credit-spread features read NSE via `nselib`. NSE fronts its
-API with Akamai and denies many non-Indian and datacenter addresses, returning an
-`Access Denied` page — or simply not responding — instead of JSON. When that
-happens these endpoints fail in about 15 seconds with:
+API with Akamai Bot Manager, which fingerprints the **TLS handshake** — not just
+the headers. `nselib` uses plain `requests`, whose handshake is not Chrome's, so
+Akamai now answers it with `403 Access Denied` regardless of how browser-like the
+headers are. This is a change on NSE's side; the same code worked previously.
+
+`backend/nse_client.py` therefore routes nselib's HTTP through `curl_cffi`, which
+reproduces Chrome's handshake. Measured against the same endpoint:
+
+| Transport | `nseindia.com` |
+|-----------|----------------|
+| `requests` (nselib default) | `403 Forbidden` |
+| `curl_cffi` Chrome handshake | `200 OK` |
+
+To fall back to nselib's own transport:
+
+```bash
+export OMNISPREAD_NSE_TRANSPORT=requests
+```
+
+**Remaining limitation.** Passing the TLS check is necessary but not always
+sufficient. Akamai also issues an `_abck` cookie that is only *validated* by
+executing its JavaScript sensor, and the heavier historical-data endpoints are
+gated on it. From a blocked network those endpoints still stall, and the call
+fails in about 15 seconds with a clear message rather than hanging:
 
 > NSE returned a non-JSON response (usually an Akamai 'Access Denied' page).
 
-That is an external network restriction, not a configuration error. Equity
-scanning and equity backtests use Yahoo Finance and are unaffected.
+Equity scanning and equity backtests use Yahoo Finance and are unaffected.
 
 ## CLI
 
