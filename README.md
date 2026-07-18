@@ -25,11 +25,17 @@
 
 ## Quick Start
 
+The backend **must** run from the project virtual environment at `backend/.venv`.
+A bare `python3` on `PATH` is often a different interpreter with none of the
+dependencies installed, which fails at import with `No module named 'numpy'`.
+
 ```bash
-# Backend
+# Backend — create the venv once, then always use it
 cd backend
-pip3 install -r requirements.txt
-python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
+python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8000
 
 # Frontend (separate terminal)
 cd frontend
@@ -37,10 +43,36 @@ npm install
 npm run dev -- --port 3000
 ```
 
-Or use the launcher:
+Or use the launcher, which picks up `backend/.venv` automatically:
 ```bash
 bash launch.sh
 ```
+
+Verify the environment at any time:
+```bash
+cd backend && .venv/bin/python -c "import numpy, pandas, scipy, nselib; print('deps OK')"
+```
+
+Run the tests (never touches the network):
+```bash
+cd backend && .venv/bin/python -m pytest -q
+```
+
+Requirements are pinned to the versions verified on **Python 3.14.0**. Use
+`.venv/bin/python` (or `.venv/bin/pip`) for every backend command — `pip3` and
+`python3` may resolve elsewhere.
+
+### NSE data availability
+
+Futures, options and credit-spread features read NSE via `nselib`. NSE fronts its
+API with Akamai and denies many non-Indian and datacenter addresses, returning an
+`Access Denied` page — or simply not responding — instead of JSON. When that
+happens these endpoints fail in about 15 seconds with:
+
+> NSE returned a non-JSON response (usually an Akamai 'Access Denied' page).
+
+That is an external network restriction, not a configuration error. Equity
+scanning and equity backtests use Yahoo Finance and are unaffected.
 
 ## CLI
 

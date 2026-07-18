@@ -54,17 +54,19 @@ async def get_results(task_id: str):
 
 
 @app.post("/credit-spread-structure")
-async def credit_spread_structure(request: CreditStructureRequest):
+def credit_spread_structure(request: CreditStructureRequest):
+    # Defined with `def`, not `async def`: the NSE fetch below is blocking, and
+    # on the event loop a stalled edge would freeze every other request.
     try:
-        from nselib import derivatives
+        from nse_client import fetch_future, fetch_option
 
         result = build_credit_spread_structure(
             x=request.x,
             y=request.y,
             qty=request.qty,
             direction=request.direction,
-            fetch_future=derivatives.future_price_volume_data,
-            fetch_option=derivatives.option_price_volume_data,
+            fetch_future=fetch_future,
+            fetch_option=fetch_option,
             strike_rule=request.strike_rule,
             sold_sd=request.sold_sd,
             hedge_sd=request.hedge_sd,
@@ -76,7 +78,9 @@ async def credit_spread_structure(request: CreditStructureRequest):
 
 
 @app.post("/backtest")
-async def backtest_pair(request: BacktestRequest):
+def backtest_pair(request: BacktestRequest):
+    # Sync on purpose - see credit_spread_structure above. Both yfinance and the
+    # NSE fetches block, so FastAPI should run this in its worker threadpool.
     if request.half_life < 1:
         return {"status": "failed", "error": "Half-life must be at least 1 bar"}
 
@@ -87,7 +91,7 @@ async def backtest_pair(request: BacktestRequest):
                 "error": "Futures and options backtests are available only for daily scans.",
             }
         try:
-            from nselib import derivatives
+            from nse_client import fetch_future, fetch_option
 
             result = run_derivatives_backtest(
                 x=request.x,
@@ -97,8 +101,8 @@ async def backtest_pair(request: BacktestRequest):
                 half_life=request.half_life,
                 end_date=request.end_date,
                 strategy=request.strategy,
-                fetch_future=derivatives.future_price_volume_data,
-                fetch_option=derivatives.option_price_volume_data,
+                fetch_future=fetch_future,
+                fetch_option=fetch_option,
                 strike_rule=request.strike_rule,
                 sold_sd=request.sold_sd,
                 hedge_sd=request.hedge_sd,

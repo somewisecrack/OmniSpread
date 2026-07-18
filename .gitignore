@@ -8,6 +8,8 @@ build/
 .env
 *.log
 logs/
+.venv/
+venv/
 
 # Node/Next.js
 node_modules/

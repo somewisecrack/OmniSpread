@@ -40,20 +40,34 @@ sleep 1
 cd "$PROJECT_DIR/backend"
 echo "Starting backend..." >> "$LOGS/launcher.log"
 
+# The project venv is the supported interpreter. Falling back to whatever
+# python3 happens to be on PATH is what produced "No module named 'numpy'",
+# so the fallback now only runs if the venv is genuinely absent, and it says so.
 PYTHON_BIN="python3"
 if [ -x "$PROJECT_DIR/backend/.venv/bin/python" ]; then
     PYTHON_BIN="$PROJECT_DIR/backend/.venv/bin/python"
-elif ! "$PYTHON_BIN" -c "import uvicorn" >/dev/null 2>&1; then
-    for candidate in \
-        "/Library/Frameworks/Python.framework/Versions/3.14/bin/python3" \
-        "/opt/homebrew/bin/python3" \
-        "/usr/local/bin/python3" \
-        "/usr/bin/python3"; do
-        if [ -x "$candidate" ] && "$candidate" -c "import uvicorn" >/dev/null 2>&1; then
-            PYTHON_BIN="$candidate"
-            break
-        fi
-    done
+else
+    echo "WARNING: backend/.venv is missing - falling back to a system python." >> "$LOGS/launcher.log"
+    echo "         Create it with: cd backend && python3 -m venv .venv && \\" >> "$LOGS/launcher.log"
+    echo "         .venv/bin/python -m pip install -r requirements.txt" >> "$LOGS/launcher.log"
+    if ! "$PYTHON_BIN" -c "import uvicorn" >/dev/null 2>&1; then
+        for candidate in \
+            "/Library/Frameworks/Python.framework/Versions/3.14/bin/python3" \
+            "/opt/homebrew/bin/python3" \
+            "/usr/local/bin/python3" \
+            "/usr/bin/python3"; do
+            if [ -x "$candidate" ] && "$candidate" -c "import uvicorn" >/dev/null 2>&1; then
+                PYTHON_BIN="$candidate"
+                break
+            fi
+        done
+    fi
+fi
+
+if ! "$PYTHON_BIN" -c "import numpy, pandas, scipy, nselib, uvicorn" >/dev/null 2>&1; then
+    echo "ERROR: $PYTHON_BIN cannot import the backend dependencies." >> "$LOGS/launcher.log"
+    echo "       Run: cd backend && python3 -m venv .venv && \\" >> "$LOGS/launcher.log"
+    echo "       .venv/bin/python -m pip install -r requirements.txt" >> "$LOGS/launcher.log"
 fi
 
 echo "Backend python: $PYTHON_BIN" >> "$LOGS/launcher.log"

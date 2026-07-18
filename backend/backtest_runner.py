@@ -124,13 +124,13 @@ def run_backtest(*, x: str, y: str, qty: float, direction: str, half_life: int,
     if interval != "1d":
         raise ValueError("Futures and options backtests are available only for daily scans.")
 
-    from nselib import derivatives
+    from nse_client import fetch_future, fetch_option
 
     result = run_derivatives_backtest(
         x=x, y=y, qty=qty, direction=direction, half_life=half_life,
         end_date=end_date, strategy=strategy,
-        fetch_future=derivatives.future_price_volume_data,
-        fetch_option=derivatives.option_price_volume_data,
+        fetch_future=fetch_future,
+        fetch_option=fetch_option,
         strike_rule=strike_rule, sold_sd=sold_sd, hedge_sd=hedge_sd,
     )
     rows = result["points"]
