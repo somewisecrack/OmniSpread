@@ -71,7 +71,10 @@ if ! "$PYTHON_BIN" -c "import numpy, pandas, scipy, nselib, uvicorn" >/dev/null 
 fi
 
 echo "Backend python: $PYTHON_BIN" >> "$LOGS/launcher.log"
-nohup "$PYTHON_BIN" -m uvicorn main:app --host 0.0.0.0 --port 8000 >> "$LOGS/backend.log" 2>&1 &
+# --reload so edits to the backend take effect without a manual restart. Without
+# it the server keeps serving whatever code it started with, which shows up as
+# stale results or a 422 for a strategy the running process has never heard of.
+nohup "$PYTHON_BIN" -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-dir "$PROJECT_DIR/backend" >> "$LOGS/backend.log" 2>&1 &
 disown
 
 sleep 2
