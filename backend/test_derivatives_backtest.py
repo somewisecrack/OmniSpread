@@ -1,6 +1,7 @@
 import pandas as pd
 
 from derivatives_backtest import (
+    STRIKE_RULE_LEGACY,
     STRIKE_RULE_VOL,
     _clean,
     _credit_spread_contracts,
@@ -106,10 +107,12 @@ def test_futures_options_selects_expiry_after_exit_and_protective_options():
 
 
 def test_credit_spreads_buy_hedges_are_three_strikes_further_otm():
+    """Legacy rule, now opt-in: sold 2% OTM, hedge three listed strikes further."""
     result = run_derivatives_backtest(
         x="AAA.NS", y="BBB.NS", qty=1.5, direction="SHORT_SPREAD",
         half_life=2, end_date="2026-06-01", strategy="credit_spreads",
         fetch_future=_fetch_future, fetch_option=_fetch_option,
+        strike_rule=STRIKE_RULE_LEGACY,
     )
     x_legs = [leg for leg in result["legs"] if leg["asset"] == "x"]
     y_legs = [leg for leg in result["legs"] if leg["asset"] == "y"]
@@ -214,10 +217,33 @@ def test_vol_strike_rule_repairs_a_stale_atm_leg_via_put_call_parity():
     assert sold.strike == 920.0
 
 
-def test_legacy_strike_rule_is_the_default_and_unchanged():
+def test_vol_strike_rule_is_the_default():
+    """Credit spreads are volatility-scaled unless legacy is asked for."""
     options = _vol_option_frame()
     expiry = pd.Timestamp(VOL_EXPIRY)
     sold, hedge = _credit_spread_contracts(options, expiry, "PE", VOL_SPOT)
+    assert (sold.strike, hedge.strike) == (920.0, 860.0)
+
+
+def test_vol_rule_falls_back_to_legacy_on_a_chain_it_cannot_express():
+    """A 40%-of-spot straddle pushes 1 SD past the outermost strike.
+
+    The structure must still be produced (via the legacy offset) rather than
+    failing outright.
+    """
+    options = _clean(_option_frame("AAA", 25, 100.0))
+    expiry = pd.Timestamp("30-Jun-2026")
+    sold, hedge = _credit_spread_contracts(options, expiry, "PE", 100.0)
+    assert sold.strike != hedge.strike
+    assert sold.strike - hedge.strike == 30  # legacy three-strike wing
+
+
+def test_legacy_strike_rule_still_available_on_request():
+    options = _vol_option_frame()
+    expiry = pd.Timestamp(VOL_EXPIRY)
+    sold, hedge = _credit_spread_contracts(
+        options, expiry, "PE", VOL_SPOT, strike_rule=STRIKE_RULE_LEGACY,
+    )
     # 2% OTM -> 980, hedge three listed 20-point strikes further out -> 920
     assert (sold.strike, hedge.strike) == (980.0, 920.0)
 

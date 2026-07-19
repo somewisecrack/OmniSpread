@@ -173,8 +173,8 @@ Two rules are available, selected with `--strike-rule` (API: `strike_rule`):
 
 | Rule | Sold strike | Hedge strike |
 |------|-------------|--------------|
-| `legacy` (default) | flat 2% OTM | three *listed strikes* further OTM |
-| `vol` | `--sold-sd` expected moves OTM (default 1.0) | `--hedge-sd` expected moves OTM (default 1.75) |
+| **`vol` (default)** | `--sold-sd` expected moves OTM (default 1.0) | `--hedge-sd` expected moves OTM (default 1.75) |
+| `legacy` | flat 2% OTM | three *listed strikes* further OTM |
 
 The `vol` rule sizes strikes by the **expected move implied by the ATM straddle**. Since an ATM
 straddle is worth about `S·σ·√T·√(2/π)`, the one-standard-deviation move is `straddle × 1.2533` —
@@ -190,12 +190,28 @@ NSE publishes a settlement price for strikes that never traded, which can badly 
 straddle. When only one side of the ATM pair has traded volume, the other is rebuilt from
 put-call parity rather than trusted.
 
+If a chain is too shallow to express the volatility-scaled strikes — one standard
+deviation can land at or beyond the outermost listed strike — the leg falls back
+to the legacy offset and logs a warning rather than failing the structure.
+
 ```bash
+# vol is the default; pass --strike-rule legacy for the old fixed-offset rule
 python3 cli.py backtest --x INFY.NS --y TECHM.NS --qty 1.31 \
-    --half-life 11 --end-date 2025-06-06 --strategy credit_spreads --strike-rule vol
+    --half-life 11 --end-date 2026-07-01 --strategy credit_spreads --strike-rule legacy
 ```
 
-`legacy` remains the default everywhere, so existing behaviour is unchanged unless opted in.
+Worked example (HCLTECH/BAJFINANCE, entry 2026-07-01, spots 1034.20 / 1014.90):
+
+| | `vol` | `legacy` |
+|---|---|---|
+| HCLTECH PE | sold 930 / hedge 900 | sold 1010 / hedge 980 |
+| BAJFINANCE CE | sold 1090 / hedge 1140 | sold 1040 / hedge 1070 |
+| Credit | ₹13,110 | ₹29,175 |
+| Margin | ₹194,609 | ₹148,544 |
+
+Note the legacy wings are both exactly 30 points — three listed strikes — while
+the `vol` wings differ per name (30 and 50) because they scale with each stock's
+own expected move.
 
 ## How It Works
 

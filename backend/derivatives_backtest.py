@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -8,6 +9,7 @@ from typing import Callable
 import pandas as pd
 from margin_estimator import estimate_margin
 
+logger = logging.getLogger("OmniSpread.derivatives")
 
 FetchFuture = Callable[..., pd.DataFrame]
 FetchOption = Callable[..., pd.DataFrame]
@@ -312,26 +314,35 @@ def _credit_spread_contracts(
     option_type: str,
     spot: float,
     *,
-    strike_rule: str = STRIKE_RULE_LEGACY,
+    strike_rule: str = STRIKE_RULE_VOL,
     sold_sd: float = DEFAULT_SOLD_SD,
     hedge_sd: float = DEFAULT_HEDGE_SD,
     snapshot: pd.DataFrame | None = None,
 ) -> tuple[Contract, Contract]:
     """Return the (sold, hedge) contracts for one leg of a credit spread."""
     if strike_rule == STRIKE_RULE_VOL:
-        entry = snapshot if snapshot is not None else _entry_rows(option_df, expiry)
-        move = _atm_expected_move(entry, spot, expiry)
-        sold = _choose_option_by_move(
-            option_df, expiry, option_type, spot, sold_sd, move, snapshot=snapshot
-        )
-        hedge = _choose_option_by_move(
-            option_df, expiry, option_type, spot, hedge_sd, move, snapshot=snapshot
-        )
-        if hedge.strike == sold.strike:
-            # A coarse ladder can collapse both legs onto one strike; step the
-            # hedge one listed strike further OTM so the spread still has width.
-            hedge = _step_strike(option_df, expiry, option_type, sold, snapshot=snapshot)
-        return sold, hedge
+        try:
+            entry = snapshot if snapshot is not None else _entry_rows(option_df, expiry)
+            move = _atm_expected_move(entry, spot, expiry)
+            sold = _choose_option_by_move(
+                option_df, expiry, option_type, spot, sold_sd, move, snapshot=snapshot
+            )
+            hedge = _choose_option_by_move(
+                option_df, expiry, option_type, spot, hedge_sd, move, snapshot=snapshot
+            )
+            if hedge.strike == sold.strike:
+                # A coarse ladder can collapse both legs onto one strike; step the
+                # hedge one listed strike further OTM so the spread still has width.
+                hedge = _step_strike(option_df, expiry, option_type, sold, snapshot=snapshot)
+            return sold, hedge
+        except ValueError as exc:
+            # A shallow chain cannot always express a volatility-scaled spread
+            # (1 SD can land at or beyond the outermost listed strike). Fall back
+            # to the fixed-offset rule rather than failing the whole structure.
+            logger.warning(
+                "Volatility-scaled strikes unavailable for %s %s (%s); using the legacy rule.",
+                option_type, expiry.strftime("%d-%b-%Y"), exc,
+            )
 
     offset = -0.02 if option_type == "PE" else 0.02
     hedge_steps = -3 if option_type == "PE" else 3
@@ -401,7 +412,7 @@ def build_credit_spread_structure(
     fetch_future: FetchFuture,
     fetch_option: FetchOption,
     as_of_date: datetime | None = None,
-    strike_rule: str = STRIKE_RULE_LEGACY,
+    strike_rule: str = STRIKE_RULE_VOL,
     sold_sd: float = DEFAULT_SOLD_SD,
     hedge_sd: float = DEFAULT_HEDGE_SD,
 ) -> dict:
@@ -517,7 +528,7 @@ def run_derivatives_backtest(
     strategy: str,
     fetch_future: FetchFuture,
     fetch_option: FetchOption,
-    strike_rule: str = STRIKE_RULE_LEGACY,
+    strike_rule: str = STRIKE_RULE_VOL,
     sold_sd: float = DEFAULT_SOLD_SD,
     hedge_sd: float = DEFAULT_HEDGE_SD,
 ) -> dict:

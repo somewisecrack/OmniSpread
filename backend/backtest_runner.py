@@ -14,7 +14,7 @@ import yfinance as yf
 from derivatives_backtest import (
     DEFAULT_HEDGE_SD,
     DEFAULT_SOLD_SD,
-    STRIKE_RULE_LEGACY,
+    STRIKE_RULE_VOL,
     run_derivatives_backtest,
 )
 
@@ -101,7 +101,7 @@ def run_equity_backtest(*, x: str, y: str, qty: float, direction: str,
 
 def run_backtest(*, x: str, y: str, qty: float, direction: str, half_life: int,
                  end_date: str, strategy: str = "equity", interval: str = "1d",
-                 strike_rule: str = STRIKE_RULE_LEGACY,
+                 strike_rule: str = STRIKE_RULE_VOL,
                  sold_sd: float = DEFAULT_SOLD_SD,
                  hedge_sd: float = DEFAULT_HEDGE_SD) -> dict:
     """Dispatch to the right strategy. Returns a normalized result dict.

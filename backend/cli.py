@@ -243,9 +243,9 @@ def build_parser():
                       help="Strategy to run, or 'all' for every type (default: all)")
     p_bt.add_argument("--json", nargs="?", const="-", metavar="FILE",
                       help="Output JSON instead of a table")
-    p_bt.add_argument("--strike-rule", default="legacy", choices=["legacy", "vol"],
+    p_bt.add_argument("--strike-rule", default="vol", choices=["legacy", "vol"],
                       help="Credit-spread strike selection: 'legacy' = 2%% OTM + 3 strikes; "
-                           "'vol' = scaled to the ATM-straddle expected move (default: legacy)")
+                           "'vol' = scaled to the ATM-straddle expected move (default: vol)")
     p_bt.add_argument("--sold-sd", type=float, default=1.0,
                       help="Sold strike distance in expected moves, --strike-rule vol (default: 1.0)")
     p_bt.add_argument("--hedge-sd", type=float, default=1.75,
