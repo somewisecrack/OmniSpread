@@ -20,13 +20,12 @@ from engine import OmniSpreadEngine
 from backtest_runner import run_backtest
 from presets import PRESETS
 
-STRATEGIES = ["equity", "futures", "futures_options", "credit_spreads", "collar"]
+STRATEGIES = ["equity", "futures", "futures_options", "credit_spreads"]
 STRATEGY_LABELS = {
     "equity": "Stocks only",
     "futures": "Futures only",
     "futures_options": "Futures + options",
     "credit_spreads": "Credit spreads",
-    "collar": "Collar + income",
 }
 
 # Columns rendered in the results table: (result key, header, width, alignment)

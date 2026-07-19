@@ -104,7 +104,7 @@ function BacktestContent() {
         interval: params.get("interval") || "1d",
         half_life: Number(params.get("half_life") || "0"),
         end_date: params.get("end_date") || "",
-        strategy: (params.get("strategy") || "equity") as "equity" | "futures" | "futures_options" | "credit_spreads" | "collar",
+        strategy: (params.get("strategy") || "equity") as "equity" | "futures" | "futures_options" | "credit_spreads",
     }), [params]);
 
     useEffect(() => {
@@ -147,7 +147,6 @@ function BacktestContent() {
         futures: "Futures only",
         futures_options: "Futures + option buy",
         credit_spreads: "Credit spreads",
-        collar: "Collar + income",
     };
 
     return (

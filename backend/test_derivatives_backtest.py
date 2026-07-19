@@ -156,8 +156,8 @@ def test_group_span_nets_every_leg_on_the_same_underlying():
     """A short spread against a future must reduce the scanned worst case.
 
     The previous estimator read only futures[0] and options[0], so any leg
-    beyond the first two was silently ignored and a collar priced identically
-    to a bare protected future.
+    beyond the first two was silently ignored and a four-leg group priced
+    identically to a bare protected future.
     """
     from margin_estimator import _group_span_estimate
 
@@ -168,54 +168,11 @@ def test_group_span_nets_every_leg_on_the_same_underlying():
 
     future_only = [leg("FUT", "BUY", 0, spot)]
     protected = future_only + [leg("PE", "BUY", 950, 12.0)]
-    collar = protected + [leg("CE", "SELL", 1060, 8.0), leg("CE", "BUY", 1100, 3.0)]
+    multi_leg = protected + [leg("CE", "SELL", 1060, 8.0), leg("CE", "BUY", 1100, 3.0)]
 
     assert _group_span_estimate(protected) < _group_span_estimate(future_only)
     # The short call spread brings in premium, lowering the worst case further.
-    assert _group_span_estimate(collar) < _group_span_estimate(protected)
-
-
-def test_collar_is_a_future_a_protective_long_and_one_covered_short():
-    """Three legs per asset, with the short on the opposite side to protection.
-
-    The short is deliberately naked of an option wing: the futures leg already
-    covers it, so buying a wing pays twice for the same protection.
-    """
-    result = run_derivatives_backtest(
-        x="AAA.NS", y="BBB.NS", qty=1.5, direction="SHORT_SPREAD",
-        half_life=2, end_date="2026-06-01", strategy="collar",
-        fetch_future=_fetch_future, fetch_option=_fetch_option,
-    )
-    x_legs = [leg for leg in result["legs"] if leg["asset"] == "x"]
-    y_legs = [leg for leg in result["legs"] if leg["asset"] == "y"]
-    assert len(x_legs) == 3 and len(y_legs) == 3
-
-    # x is long the future: protective put, covered short call.
-    assert [(leg["instrument"], leg["side"]) for leg in x_legs] == [
-        ("FUT", "BUY"), ("PE", "BUY"), ("CE", "SELL"),
-    ]
-    # y is short the future, so the sides mirror.
-    assert [(leg["instrument"], leg["side"]) for leg in y_legs] == [
-        ("FUT", "SELL"), ("CE", "BUY"), ("PE", "SELL"),
-    ]
-
-
-def test_collar_never_pays_a_wing_it_already_owns():
-    """No BUY option sits on the same side as the covered short."""
-    result = run_derivatives_backtest(
-        x="AAA.NS", y="BBB.NS", qty=1.5, direction="SHORT_SPREAD",
-        half_life=2, end_date="2026-06-01", strategy="collar",
-        fetch_future=_fetch_future, fetch_option=_fetch_option,
-    )
-    for asset in ("x", "y"):
-        legs = [leg for leg in result["legs"] if leg["asset"] == asset]
-        shorts = [leg for leg in legs if leg["side"] == "SELL" and leg["instrument"] != "FUT"]
-        assert len(shorts) == 1
-        same_side_longs = [
-            leg for leg in legs
-            if leg["side"] == "BUY" and leg["instrument"] == shorts[0]["instrument"]
-        ]
-        assert same_side_longs == []
+    assert _group_span_estimate(multi_leg) < _group_span_estimate(protected)
 
 
 def test_current_credit_structure_uses_whole_lots_and_correct_spread_sides():

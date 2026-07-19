@@ -410,8 +410,8 @@ def _option_at_distance(
 ) -> Contract:
     """A single option `sd` expected moves out of the money.
 
-    Used for both the protective long and the covered short of a collar, so the
-    strike scales with volatility and tenor instead of a flat percentage of spot.
+    The strike scales with volatility and tenor instead of a flat percentage of
+    spot.
     """
     if strike_rule == STRIKE_RULE_VOL:
         try:
@@ -701,7 +701,7 @@ def run_derivatives_backtest(
         expiry = asset["expiry"]
         future_lot = asset["future_lot"]
 
-        if strategy in {"futures", "futures_options", "collar"}:
+        if strategy in {"futures", "futures_options"}:
             future = asset["future"]
             name = f"{key}_future"
             leg_series[name] = sign * (future - future.iloc[0]) * future_lot * count
@@ -728,50 +728,6 @@ def run_derivatives_backtest(
                 "expiry": expiry.strftime("%d-%b-%Y"),
                 "spot": asset["spot"], "price": float(option.iloc[0]),
                 "is_index": asset["is_index"],
-            })
-
-        if strategy == "collar":
-            # Protection sits on the side the future is exposed to, and the
-            # income spread on the opposite side. Selling the same side the
-            # future already leans on would double the directional bet, and with
-            # matching distances the protective long and the spread's short leg
-            # would simply cancel.
-            protect_type = "PE" if sign > 0 else "CE"
-            protect = _option_at_distance(
-                asset["options"], expiry, protect_type, asset["spot"],
-                strike_rule=strike_rule, sd=sold_sd,
-            )
-            protect_prices = _price_series(asset["options"], protect)
-            leg_series[f"{key}_{protect_type.lower()}_protect"] = (
-                (protect_prices - protect_prices.iloc[0]) * protect.lot_size * count
-            )
-            leg_meta.append({
-                "asset": key, "symbol": symbol, "instrument": protect_type, "side": "BUY",
-                "lots": count, "lot_size": protect.lot_size, "strike": protect.strike,
-                "expiry": expiry.strftime("%d-%b-%Y"), "spot": asset["spot"],
-                "price": float(protect_prices.iloc[0]), "is_index": asset["is_index"],
-            })
-
-            # The income leg is a single short option, not a spread. The futures
-            # position already covers it - a long future covers a short call, a
-            # short future covers a short put - so buying a wing pays for
-            # protection that is already held. On LT/BAJAJFINSV that wing cost
-            # 4,985 in premium and added 10,545 of margin for nothing, and turned
-            # the structure into a net debit.
-            income_type = "CE" if sign > 0 else "PE"
-            income = _option_at_distance(
-                asset["options"], expiry, income_type, asset["spot"],
-                strike_rule=strike_rule, sd=sold_sd,
-            )
-            income_prices = _price_series(asset["options"], income)
-            leg_series[f"{key}_{income_type.lower()}_short"] = (
-                -(income_prices - income_prices.iloc[0]) * income.lot_size * count
-            )
-            leg_meta.append({
-                "asset": key, "symbol": symbol, "instrument": income_type, "side": "SELL",
-                "lots": count, "lot_size": income.lot_size, "strike": income.strike,
-                "expiry": expiry.strftime("%d-%b-%Y"), "spot": asset["spot"],
-                "price": float(income_prices.iloc[0]), "is_index": asset["is_index"],
             })
 
         if strategy == "credit_spreads":

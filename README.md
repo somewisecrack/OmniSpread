@@ -220,39 +220,6 @@ If a chain is too shallow to express the volatility-scaled strikes — one stand
 deviation can land at or beyond the outermost listed strike — that leg falls back
 to the legacy offset and logs a warning rather than failing the structure.
 
-### Collar + income
-
-A fifth structure (`--strategy collar`) is three legs per asset: the futures
-position, a protective option on the side the future is exposed to, and a single
-**covered short** on the opposite side.
-
-| Futures leg | Protection | Income |
-|-------------|-----------|--------|
-| Long | buy put | sell call (covered by the future) |
-| Short | buy call | sell put (covered by the future) |
-
-Two things matter here. The sides must differ - selling the same side the future
-already leans on doubles the directional bet, and at matching distances the
-protective long would cancel the short outright. And the short carries **no
-option wing**: the futures leg already covers it, so a wing pays a second time
-for protection already held. On LT/BAJAJFINSV a wing cost 4,985 in premium and
-added 10,545 of margin, turning the structure into a net debit.
-
-Measured on SBIN/DRREDDY entered 2026-07-12:
-
-| Strategy | SPAN | ELM | Margin | Return |
-|----------|-----:|----:|-------:|-------:|
-| Credit spreads | 49,688 | 54,226 | 103,913 | +0.63% |
-| Futures | 220,002 | 54,226 | 274,228 | −5.08% |
-| Futures + options | 94,106 | 54,226 | 156,126 | −9.73% |
-| Collar + income | **88,931** | **108,452** | 200,002 | −6.37% |
-
-The collar has the **lowest SPAN** of any futures structure — the income legs
-genuinely cut the worst case — but each short leg is charged ELM on notional, so
-the ELM doubles and the total margin ends up higher than the plain protected
-future. Under NSE's margin rules this trades risk for capital rather than saving
-capital.
-
 ### Expiry selection
 
 Derivatives backtests always use the **nearest listed expiry to the entry date**,
