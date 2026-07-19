@@ -22,7 +22,7 @@ FetchOption = Callable[..., pd.DataFrame]
 STRIKE_RULE_LEGACY = "legacy"
 STRIKE_RULE_VOL = "vol"
 DEFAULT_SOLD_SD = 1.0
-DEFAULT_HEDGE_SD = 1.75
+DEFAULT_HEDGE_SD = 2.5
 
 # An ATM straddle is worth about S*sigma*sqrt(T)*sqrt(2/pi) - the mean absolute
 # move - so the one-standard-deviation move is straddle / sqrt(2/pi).
@@ -308,6 +308,96 @@ def _step_strike(
     )
 
 
+def _entry_price(entry: pd.DataFrame, strike: float, option_type: str) -> float | None:
+    row = entry[(entry["STRIKE_PRICE"] == strike) & (entry["OPTION_TYPE"] == option_type)]
+    if row.empty:
+        return None
+    price = float(row.iloc[0]["CLOSING_PRICE"])
+    return price if price > 0 else None
+
+
+def _traded(entry: pd.DataFrame, strike: float, option_type: str) -> bool:
+    """Whether the strike actually traded on the entry day.
+
+    Untraded strikes carry a settlement mark rather than a real quote. Far OTM
+    those marks are often far too rich, which makes a wide hedge look more
+    expensive than the option it protects - enough to drive the net credit
+    negative - so they must be excluded from the search.
+    """
+    row = entry[(entry["STRIKE_PRICE"] == strike) & (entry["OPTION_TYPE"] == option_type)]
+    if row.empty:
+        return False
+    volume = pd.to_numeric(row.iloc[0].get("TOT_TRADED_QTY"), errors="coerce")
+    return bool(volume and volume > 0)
+
+
+def _optimise_hedge(
+    entry: pd.DataFrame,
+    expiry: pd.Timestamp,
+    option_type: str,
+    spot: float,
+    sold: Contract,
+    ceiling_strike: float,
+    is_index: bool,
+) -> Contract | None:
+    """Hedge strike with the best credit per rupee of margin.
+
+    Widening the wing collects more credit but raises the margin blocked against
+    the position. Both move together, so there is a genuine optimum rather than
+    a "wider is better" gradient; this walks the listed strikes and picks it.
+
+    Margin comes from the real estimator, so the trade-off is measured against
+    the same number the app reports. Lot size cancels from the ratio, so the
+    search runs one lot deep.
+    """
+    sold_price = _entry_price(entry, sold.strike, option_type)
+    if sold_price is None:
+        return None
+
+    away = -1.0 if option_type == "PE" else 1.0
+    candidates = sorted(
+        (float(value) for value in entry["STRIKE_PRICE"].unique()),
+        key=lambda strike: abs(strike - sold.strike),
+    )
+
+    best: tuple[float, Contract] | None = None
+    for strike in candidates:
+        if away * (strike - sold.strike) <= 0:
+            continue  # must sit further OTM than the sold strike
+        if away * (strike - ceiling_strike) > 0:
+            continue  # beyond the search ceiling
+        if not _traded(entry, strike, option_type):
+            continue
+        hedge_price = _entry_price(entry, strike, option_type)
+        if hedge_price is None:
+            continue
+        credit = sold_price - hedge_price
+        if credit <= 0:
+            continue
+
+        row = entry[(entry["STRIKE_PRICE"] == strike) & (entry["OPTION_TYPE"] == option_type)].iloc[0]
+        hedge = Contract(
+            symbol=str(row["SYMBOL"]), expiry=expiry, strike=strike,
+            option_type=option_type, lot_size=int(row["MARKET_LOT"]),
+        )
+        legs = [
+            {"asset": "x", "symbol": sold.symbol, "instrument": option_type, "side": "SELL",
+             "lots": 1, "lot_size": sold.lot_size, "strike": sold.strike, "spot": spot,
+             "price": sold_price, "is_index": is_index},
+            {"asset": "x", "symbol": hedge.symbol, "instrument": option_type, "side": "BUY",
+             "lots": 1, "lot_size": hedge.lot_size, "strike": strike, "spot": spot,
+             "price": hedge_price, "is_index": is_index},
+        ]
+        margin = estimate_margin(legs)["estimated_margin"]
+        if margin <= 0:
+            continue
+        ratio = credit / margin
+        if best is None or ratio > best[0]:
+            best = (ratio, hedge)
+
+    return best[1] if best else None
+
+
 def _protective_contract(
     option_df: pd.DataFrame,
     expiry: pd.Timestamp,
@@ -351,6 +441,7 @@ def _credit_spread_contracts(
     sold_sd: float = DEFAULT_SOLD_SD,
     hedge_sd: float = DEFAULT_HEDGE_SD,
     snapshot: pd.DataFrame | None = None,
+    is_index: bool = False,
 ) -> tuple[Contract, Contract]:
     """Return the (sold, hedge) contracts for one leg of a credit spread."""
     if strike_rule == STRIKE_RULE_VOL:
@@ -360,9 +451,23 @@ def _credit_spread_contracts(
             sold = _choose_option_by_move(
                 option_df, expiry, option_type, spot, sold_sd, move, snapshot=snapshot
             )
-            hedge = _choose_option_by_move(
-                option_df, expiry, option_type, spot, hedge_sd, move, snapshot=snapshot
+
+            # The hedge is chosen, not dictated: hedge_sd only bounds how far the
+            # search may look, and the strike with the best credit-to-margin
+            # ratio inside that range wins.
+            away = -1.0 if option_type == "PE" else 1.0
+            ceiling = spot + away * hedge_sd * move
+            typed = entry[(entry["OPTION_TYPE"] == option_type) & entry["STRIKE_PRICE"].notna()]
+            hedge = _optimise_hedge(
+                typed, expiry, option_type, spot, sold, ceiling, is_index,
             )
+
+            if hedge is None:
+                # Nothing tradeable inside the range - fall back to placing the
+                # hedge at the requested distance.
+                hedge = _choose_option_by_move(
+                    option_df, expiry, option_type, spot, hedge_sd, move, snapshot=snapshot
+                )
             if hedge.strike == sold.strike:
                 # A coarse ladder can collapse both legs onto one strike; step the
                 # hedge one listed strike further OTM so the spread still has width.
@@ -467,7 +572,7 @@ def build_credit_spread_structure(
         sold, hedge = _credit_spread_contracts(
             asset["options"], asset["expiry"], option_type, asset["spot"],
             strike_rule=strike_rule, sold_sd=sold_sd, hedge_sd=hedge_sd,
-            snapshot=asset["option_snapshot"],
+            snapshot=asset["option_snapshot"], is_index=asset["is_index"],
         )
         count = lot_counts[key]
         for contract, side in ((sold, "SELL"), (hedge, "BUY")):
@@ -630,6 +735,7 @@ def run_derivatives_backtest(
             sold, hedge = _credit_spread_contracts(
                 asset["options"], expiry, opt_type, asset["spot"],
                 strike_rule=strike_rule, sold_sd=sold_sd, hedge_sd=hedge_sd,
+                is_index=asset["is_index"],
             )
             sold_prices = _price_series(asset["options"], sold)
             hedge_prices = _price_series(asset["options"], hedge)

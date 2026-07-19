@@ -248,8 +248,8 @@ def build_parser():
                            "'vol' = scaled to the ATM-straddle expected move (default: vol)")
     p_bt.add_argument("--sold-sd", type=float, default=1.0,
                       help="Sold strike distance in expected moves, --strike-rule vol (default: 1.0)")
-    p_bt.add_argument("--hedge-sd", type=float, default=1.75,
-                      help="Hedge strike distance in expected moves, --strike-rule vol (default: 1.75)")
+    p_bt.add_argument("--hedge-sd", type=float, default=2.5,
+                      help="Search ceiling for the hedge, in expected moves; the best credit/margin strike inside it wins (default: 2.5)")
     p_bt.set_defaults(func=cmd_backtest)
 
     return parser

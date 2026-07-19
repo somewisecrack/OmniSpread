@@ -173,8 +173,31 @@ Two rules are available, selected with `--strike-rule` (API: `strike_rule`):
 
 | Rule | Sold strike | Hedge strike |
 |------|-------------|--------------|
-| **`vol` (default)** | `--sold-sd` expected moves OTM (default 1.0) | `--hedge-sd` expected moves OTM (default 1.75) |
+| **`vol` (default)** | `--sold-sd` expected moves OTM (default 1.0) | the strike with the best **credit per rupee of margin**, searched out to `--hedge-sd` expected moves (default 2.5) |
 | `legacy` | flat 2% OTM | three *listed strikes* further OTM |
+
+#### How the hedge is chosen
+
+The hedge is **optimised, not dictated**. Widening the wing collects more credit
+but blocks more margin, and the two move together, so there is a real optimum
+rather than a "wider is better" gradient. Every listed strike inside the search
+range is priced, its margin taken from the same estimator the app reports, and
+the best `credit / margin` wins. Lot size cancels from the ratio.
+
+`--hedge-sd` is therefore a **search ceiling**, not a placement.
+
+Strikes that did not trade on the entry day are skipped. They carry a settlement
+mark rather than a quote, and far OTM those marks are often rich enough to drive
+the net credit negative — on a live chain the credit went to **−₹312** at a 2.0
+expected-move wing purely from stale prices.
+
+Measured effect on TATACONSUM/BAJAJFINSV (entry 2026-07-03), against the fixed
+1.75-move wing this replaced:
+
+| | fixed wing | optimised |
+|---|--:|--:|
+| Margin | ₹509,240 | **₹454,240** |
+| Half-life return | 2.58% | **3.10%** |
 
 The `vol` rule sizes strikes by the **expected move implied by the ATM straddle**. Since an ATM
 straddle is worth about `S·σ·√T·√(2/π)`, the one-standard-deviation move is `straddle × 1.2533` —

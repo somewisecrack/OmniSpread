@@ -174,12 +174,17 @@ VOL_ENTRY = "01-Jun-2026"
 
 
 def _vol_option_frame(atm_call: float = 30.0, atm_call_volume: float = 500.0) -> pd.DataFrame:
-    """Chain with a realistic ~6%-of-spot ATM straddle and a 20-point ladder."""
+    """Chain with a realistic ~6%-of-spot ATM straddle and a 20-point ladder.
+
+    Premium decays convexly away from the money (halving every 40 points), as a
+    real chain does. A linear decay would make a wider hedge unconditionally
+    better and the credit-to-margin optimum would sit at the search ceiling.
+    """
     rows = []
     for strike in range(700, 1301, 20):
         for option_type in ("PE", "CE"):
             distance = abs(strike - VOL_SPOT)
-            price = max(30.0 - distance * 0.02, 1.0)
+            price = max(30.0 * (0.5 ** (distance / 40.0)), 0.05)
             volume = 500.0
             if strike == VOL_SPOT and option_type == "CE":
                 price, volume = atm_call, atm_call_volume
@@ -246,6 +251,52 @@ def test_vol_strike_rule_is_the_default():
     expiry = pd.Timestamp(VOL_EXPIRY)
     sold, hedge = _credit_spread_contracts(options, expiry, "PE", VOL_SPOT)
     assert (sold.strike, hedge.strike) == (920.0, 860.0)
+
+
+def test_hedge_maximises_credit_per_rupee_of_margin():
+    """The chosen hedge must beat every other tradeable strike on credit/margin."""
+    from margin_estimator import estimate_margin
+
+    options = _vol_option_frame()
+    expiry = pd.Timestamp(VOL_EXPIRY)
+    sold, hedge = _credit_spread_contracts(options, expiry, "PE", VOL_SPOT)
+
+    entry = options[(options["OPTION_TYPE"] == "PE") & options["STRIKE_PRICE"].notna()]
+    price_of = dict(zip(entry["STRIKE_PRICE"], entry["CLOSING_PRICE"]))
+    sold_price = price_of[sold.strike]
+
+    def ratio(strike):
+        credit = sold_price - price_of[strike]
+        if credit <= 0:
+            return -1.0
+        legs = [
+            {"asset": "x", "symbol": "AAA", "instrument": "PE", "side": "SELL", "lots": 1,
+             "lot_size": 25, "strike": sold.strike, "spot": VOL_SPOT, "price": sold_price},
+            {"asset": "x", "symbol": "AAA", "instrument": "PE", "side": "BUY", "lots": 1,
+             "lot_size": 25, "strike": strike, "spot": VOL_SPOT, "price": price_of[strike]},
+        ]
+        return credit / estimate_margin(legs)["estimated_margin"]
+
+    ceiling = VOL_SPOT - 2.5 * 75.2   # DEFAULT_HEDGE_SD expected moves
+    candidates = [s for s in price_of if ceiling <= s < sold.strike]
+    assert len(candidates) > 3, "need several candidates for this to mean anything"
+    assert ratio(hedge.strike) == max(ratio(s) for s in candidates)
+
+
+def test_hedge_search_ignores_strikes_that_never_traded():
+    """A stale mark must not win the search just because it looks cheap.
+
+    An untraded strike carries a settlement price, not a quote. Priced at 0.01
+    it would offer the best credit-to-margin ratio of any candidate, so the
+    search has to skip it on volume rather than price.
+    """
+    frame = _vol_option_frame()
+    bait = (frame["STRIKE_PRICE"] == 880) & (frame["OPTION_TYPE"] == "PE")
+    frame.loc[bait, "CLOSING_PRICE"] = 0.01
+    frame.loc[bait, "TOT_TRADED_QTY"] = 0
+
+    sold, hedge = _credit_spread_contracts(frame, pd.Timestamp(VOL_EXPIRY), "PE", VOL_SPOT)
+    assert hedge.strike != 880
 
 
 def test_vol_rule_falls_back_to_legacy_on_a_chain_it_cannot_express():
