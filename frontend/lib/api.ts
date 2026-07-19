@@ -127,6 +127,12 @@ export interface BacktestResult {
     expiry_time?: number;
     expiry_pnl?: number;
     expiry_pnl_pct?: number;
+    bars_available?: number;
+    bars_requested?: number;
+    half_life_reached?: boolean;
+    expiry_reached?: boolean;
+    contract_expiry?: string;
+    incomplete_note?: string | null;
     margin?: MarginEstimate;
     points?: BacktestPoint[];
     legs?: BacktestLeg[];

@@ -210,9 +210,29 @@ function BacktestContent() {
                     </section>
 
                     <div style={{ color: "var(--color-text-muted)", fontSize: "12px", marginBottom: "18px" }}>
-                        Entry: {formatTime(result.entry_time)} • Half-life exit: {formatTime(result.exit_time)}
-                        {result.expiry_time ? ` • Contract expiry: ${formatTime(result.expiry_time)}` : ""}
+                        Entry: {formatTime(result.entry_time)} •{" "}
+                        {result.half_life_reached === false ? "Last bar" : "Half-life exit"}: {formatTime(result.exit_time)}
+                        {result.expiry_time
+                            ? ` • ${result.expiry_reached === false ? "Last bar" : "Contract expiry"}: ${formatTime(result.expiry_time)}`
+                            : ""}
+                        {result.contract_expiry && result.expiry_reached === false
+                            ? ` • Contracts expire ${result.contract_expiry}`
+                            : ""}
                     </div>
+
+                    {result.incomplete_note && (
+                        <div style={{
+                            border: "1px solid var(--color-accent-yellow)",
+                            background: "rgba(250, 204, 21, 0.08)",
+                            borderRadius: "12px", padding: "12px 14px", marginBottom: "18px",
+                            color: "var(--color-accent-yellow)", fontSize: "12.5px", lineHeight: 1.5,
+                        }}>
+                            <strong>Position still open.</strong>{" "}
+                            <span style={{ color: "var(--color-text-secondary)" }}>
+                                {result.incomplete_note.replace("This position is still open: ", "")}
+                            </span>
+                        </div>
+                    )}
 
                     {result.legs && result.legs.length > 0 && (
                         <section className="glow-border" style={{ borderRadius: "14px", padding: "16px", background: "var(--color-bg-secondary)", marginBottom: "18px" }}>

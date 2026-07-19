@@ -150,4 +150,29 @@ def run_backtest(*, x: str, y: str, qty: float, direction: str, half_life: int,
         "legs": result["legs"],
         "x_lots": result["x_lots"],
         "y_lots": result["y_lots"],
+        "bars_available": result["bars_available"],
+        "bars_requested": result["bars_requested"],
+        "half_life_reached": result["half_life_reached"],
+        "expiry_reached": result["expiry_reached"],
+        "contract_expiry": result["contract_expiry"],
+        "incomplete_note": _incomplete_note(result),
     }
+
+
+def _incomplete_note(result: dict) -> str | None:
+    """Explain, in the result itself, when the figures are a mid-trade mark."""
+    if result["half_life_reached"] and result["expiry_reached"]:
+        return None
+    parts = []
+    if not result["half_life_reached"]:
+        parts.append(
+            f"only {result['bars_available']} of the {result['bars_requested']} "
+            "bars in the half-life have traded"
+        )
+    if not result["expiry_reached"]:
+        parts.append(f"the contracts do not expire until {result['contract_expiry']}")
+    return (
+        "This position is still open: "
+        + " and ".join(parts)
+        + ". Both exits shown are the last available bar, not a completed trade."
+    )

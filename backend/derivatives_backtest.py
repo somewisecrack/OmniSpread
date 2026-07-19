@@ -766,8 +766,16 @@ def run_derivatives_backtest(
     if margin_base <= 0:
         raise ValueError("Unable to estimate a positive entry margin for this structure.")
     pnl["pnl_pct"] = pnl["total"] * 100.0 / margin_base
-    half_life_row = pnl.iloc[min(half_life, len(pnl) - 1)]
-    half_life_time = pnl.index[min(half_life, len(pnl) - 1)]
+    # Both exits are clamped to the data that exists. A trade entered recently
+    # has neither reached its half-life nor its expiry, and reporting the last
+    # available bar as either silently presents an open position as a result.
+    last_index = len(pnl) - 1
+    half_life_index = min(half_life, last_index)
+    half_life_reached = half_life <= last_index
+    expiry_reached = bool(pnl.index[-1] >= common_expiry)
+
+    half_life_row = pnl.iloc[half_life_index]
+    half_life_time = pnl.index[half_life_index]
     expiry_row = pnl.iloc[-1]
     expiry_time = pnl.index[-1]
     if strategy == "credit_spreads":
@@ -795,4 +803,9 @@ def run_derivatives_backtest(
         "half_life_pnl_pct": round(float(half_life_row["pnl_pct"]), 4),
         "expiry_pnl_pct": round(float(expiry_row["pnl_pct"]), 4),
         "margin": margin,
+        "bars_available": len(pnl),
+        "bars_requested": half_life,
+        "half_life_reached": half_life_reached,
+        "expiry_reached": expiry_reached,
+        "contract_expiry": common_expiry.strftime("%d-%b-%Y"),
     }

@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from models import BacktestRequest, CreditStructureRequest, ScanRequest, TaskResponse
 from engine import OmniSpreadEngine
 from derivatives_backtest import build_credit_spread_structure, run_derivatives_backtest
-from backtest_runner import run_equity_backtest
+from backtest_runner import _incomplete_note, run_equity_backtest
 from presets import PRESETS
 
 logging.basicConfig(level=logging.INFO)
@@ -135,6 +135,12 @@ def backtest_pair(request: BacktestRequest):
             "legs": result["legs"],
             "x_lots": result["x_lots"],
             "y_lots": result["y_lots"],
+            "bars_available": result["bars_available"],
+            "bars_requested": result["bars_requested"],
+            "half_life_reached": result["half_life_reached"],
+            "expiry_reached": result["expiry_reached"],
+            "contract_expiry": result["contract_expiry"],
+            "incomplete_note": _incomplete_note(result),
             "note": "Daily NSE closing prices. PnL% uses a conservative estimate based on current NSE margin floors; excludes brokerage, taxes, slippage and financing costs.",
         }
 
