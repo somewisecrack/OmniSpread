@@ -398,7 +398,7 @@ def _optimise_hedge(
     return best[1] if best else None
 
 
-def _protective_contract(
+def _option_at_distance(
     option_df: pd.DataFrame,
     expiry: pd.Timestamp,
     option_type: str,
@@ -408,10 +408,10 @@ def _protective_contract(
     sd: float = DEFAULT_SOLD_SD,
     snapshot: pd.DataFrame | None = None,
 ) -> Contract:
-    """The long protective option bought against a futures leg.
+    """A single option `sd` expected moves out of the money.
 
-    Placed the same distance out as a credit spread's sold strike, so the hedge
-    scales with volatility and tenor instead of a flat percentage of spot.
+    Used for both the protective long and the covered short of a collar, so the
+    strike scales with volatility and tenor instead of a flat percentage of spot.
     """
     if strike_rule == STRIKE_RULE_VOL:
         try:
@@ -422,7 +422,7 @@ def _protective_contract(
             )
         except ValueError as exc:
             logger.warning(
-                "Volatility-scaled protective strike unavailable for %s %s (%s); "
+                "Volatility-scaled strike unavailable for %s %s (%s); "
                 "using the legacy rule.",
                 option_type, expiry.strftime("%d-%b-%Y"), exc,
             )
@@ -715,7 +715,7 @@ def run_derivatives_backtest(
 
         if strategy == "futures_options":
             opt_type = "PE" if sign > 0 else "CE"
-            contract = _protective_contract(
+            contract = _option_at_distance(
                 asset["options"], expiry, opt_type, asset["spot"],
                 strike_rule=strike_rule, sd=sold_sd,
             )
@@ -737,7 +737,7 @@ def run_derivatives_backtest(
             # matching distances the protective long and the spread's short leg
             # would simply cancel.
             protect_type = "PE" if sign > 0 else "CE"
-            protect = _protective_contract(
+            protect = _option_at_distance(
                 asset["options"], expiry, protect_type, asset["spot"],
                 strike_rule=strike_rule, sd=sold_sd,
             )
@@ -752,29 +752,27 @@ def run_derivatives_backtest(
                 "price": float(protect_prices.iloc[0]), "is_index": asset["is_index"],
             })
 
+            # The income leg is a single short option, not a spread. The futures
+            # position already covers it - a long future covers a short call, a
+            # short future covers a short put - so buying a wing pays for
+            # protection that is already held. On LT/BAJAJFINSV that wing cost
+            # 4,985 in premium and added 10,545 of margin for nothing, and turned
+            # the structure into a net debit.
             income_type = "CE" if sign > 0 else "PE"
-            sold, hedge = _credit_spread_contracts(
+            income = _option_at_distance(
                 asset["options"], expiry, income_type, asset["spot"],
-                strike_rule=strike_rule, sold_sd=sold_sd, hedge_sd=hedge_sd,
-                is_index=asset["is_index"],
+                strike_rule=strike_rule, sd=sold_sd,
             )
-            sold_prices = _price_series(asset["options"], sold)
-            hedge_prices = _price_series(asset["options"], hedge)
+            income_prices = _price_series(asset["options"], income)
             leg_series[f"{key}_{income_type.lower()}_short"] = (
-                -(sold_prices - sold_prices.iloc[0]) * sold.lot_size * count
+                -(income_prices - income_prices.iloc[0]) * income.lot_size * count
             )
-            leg_series[f"{key}_{income_type.lower()}_hedge"] = (
-                (hedge_prices - hedge_prices.iloc[0]) * hedge.lot_size * count
-            )
-            for contract, side, prices in (
-                (sold, "SELL", sold_prices), (hedge, "BUY", hedge_prices)
-            ):
-                leg_meta.append({
-                    "asset": key, "symbol": symbol, "instrument": income_type, "side": side,
-                    "lots": count, "lot_size": contract.lot_size, "strike": contract.strike,
-                    "expiry": expiry.strftime("%d-%b-%Y"), "spot": asset["spot"],
-                    "price": float(prices.iloc[0]), "is_index": asset["is_index"],
-                })
+            leg_meta.append({
+                "asset": key, "symbol": symbol, "instrument": income_type, "side": "SELL",
+                "lots": count, "lot_size": income.lot_size, "strike": income.strike,
+                "expiry": expiry.strftime("%d-%b-%Y"), "spot": asset["spot"],
+                "price": float(income_prices.iloc[0]), "is_index": asset["is_index"],
+            })
 
         if strategy == "credit_spreads":
             opt_type = "PE" if sign > 0 else "CE"

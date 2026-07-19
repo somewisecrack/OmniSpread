@@ -222,18 +222,21 @@ to the legacy offset and logs a warning rather than failing the structure.
 
 ### Collar + income
 
-A fifth structure (`--strategy collar`) holds the futures position, buys a
-protective option on the side the future is exposed to, and sells a credit
-spread on the **opposite** side:
+A fifth structure (`--strategy collar`) is three legs per asset: the futures
+position, a protective option on the side the future is exposed to, and a single
+**covered short** on the opposite side.
 
 | Futures leg | Protection | Income |
 |-------------|-----------|--------|
-| Long | buy put | sell call spread |
-| Short | buy call | sell put spread |
+| Long | buy put | sell call (covered by the future) |
+| Short | buy call | sell put (covered by the future) |
 
-The sides matter. Selling the same side the future already leans on doubles the
-directional bet, and because both use the same distance the protective long and
-the spread's short leg would cancel outright.
+Two things matter here. The sides must differ - selling the same side the future
+already leans on doubles the directional bet, and at matching distances the
+protective long would cancel the short outright. And the short carries **no
+option wing**: the futures leg already covers it, so a wing pays a second time
+for protection already held. On LT/BAJAJFINSV a wing cost 4,985 in premium and
+added 10,545 of margin, turning the structure into a net debit.
 
 Measured on SBIN/DRREDDY entered 2026-07-12:
 

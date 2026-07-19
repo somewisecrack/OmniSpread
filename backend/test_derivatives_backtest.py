@@ -175,12 +175,11 @@ def test_group_span_nets_every_leg_on_the_same_underlying():
     assert _group_span_estimate(collar) < _group_span_estimate(protected)
 
 
-def test_collar_puts_protection_and_income_on_opposite_sides():
-    """Long future -> protective PE and a short CE spread, and vice versa.
+def test_collar_is_a_future_a_protective_long_and_one_covered_short():
+    """Three legs per asset, with the short on the opposite side to protection.
 
-    Selling the same side the future leans on would double the directional bet,
-    and at matching distances the protective long would cancel the spread's
-    short leg outright.
+    The short is deliberately naked of an option wing: the futures leg already
+    covers it, so buying a wing pays twice for the same protection.
     """
     result = run_derivatives_backtest(
         x="AAA.NS", y="BBB.NS", qty=1.5, direction="SHORT_SPREAD",
@@ -189,20 +188,34 @@ def test_collar_puts_protection_and_income_on_opposite_sides():
     )
     x_legs = [leg for leg in result["legs"] if leg["asset"] == "x"]
     y_legs = [leg for leg in result["legs"] if leg["asset"] == "y"]
+    assert len(x_legs) == 3 and len(y_legs) == 3
 
-    # x is the long future leg
-    assert (x_legs[0]["instrument"], x_legs[0]["side"]) == ("FUT", "BUY")
-    assert (x_legs[1]["instrument"], x_legs[1]["side"]) == ("PE", "BUY")   # protection
-    assert [(leg["instrument"], leg["side"]) for leg in x_legs[2:]] == [("CE", "SELL"), ("CE", "BUY")]
+    # x is long the future: protective put, covered short call.
+    assert [(leg["instrument"], leg["side"]) for leg in x_legs] == [
+        ("FUT", "BUY"), ("PE", "BUY"), ("CE", "SELL"),
+    ]
+    # y is short the future, so the sides mirror.
+    assert [(leg["instrument"], leg["side"]) for leg in y_legs] == [
+        ("FUT", "SELL"), ("CE", "BUY"), ("PE", "SELL"),
+    ]
 
-    # y is the short future leg, so the sides mirror
-    assert (y_legs[0]["instrument"], y_legs[0]["side"]) == ("FUT", "SELL")
-    assert (y_legs[1]["instrument"], y_legs[1]["side"]) == ("CE", "BUY")   # protection
-    assert [(leg["instrument"], leg["side"]) for leg in y_legs[2:]] == [("PE", "SELL"), ("PE", "BUY")]
 
-    # Nothing cancels: the protective strike differs from the short strike.
-    assert x_legs[1]["strike"] != x_legs[2]["strike"]
-    assert y_legs[1]["strike"] != y_legs[2]["strike"]
+def test_collar_never_pays_a_wing_it_already_owns():
+    """No BUY option sits on the same side as the covered short."""
+    result = run_derivatives_backtest(
+        x="AAA.NS", y="BBB.NS", qty=1.5, direction="SHORT_SPREAD",
+        half_life=2, end_date="2026-06-01", strategy="collar",
+        fetch_future=_fetch_future, fetch_option=_fetch_option,
+    )
+    for asset in ("x", "y"):
+        legs = [leg for leg in result["legs"] if leg["asset"] == asset]
+        shorts = [leg for leg in legs if leg["side"] == "SELL" and leg["instrument"] != "FUT"]
+        assert len(shorts) == 1
+        same_side_longs = [
+            leg for leg in legs
+            if leg["side"] == "BUY" and leg["instrument"] == shorts[0]["instrument"]
+        ]
+        assert same_side_longs == []
 
 
 def test_current_credit_structure_uses_whole_lots_and_correct_spread_sides():
