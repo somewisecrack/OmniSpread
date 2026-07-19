@@ -190,9 +190,21 @@ NSE publishes a settlement price for strikes that never traded, which can badly 
 straddle. When only one side of the ATM pair has traded volume, the other is rebuilt from
 put-call parity rather than trusted.
 
+The same scaling is used for the **futures + options** protective leg: it is
+bought one expected move out, not a flat 2% of spot.
+
 If a chain is too shallow to express the volatility-scaled strikes — one standard
-deviation can land at or beyond the outermost listed strike — the leg falls back
+deviation can land at or beyond the outermost listed strike — that leg falls back
 to the legacy offset and logs a warning rather than failing the structure.
+
+### Expiry selection
+
+Derivatives backtests always use the **nearest listed expiry to the entry date**,
+even when it falls before the half-life exit; the trade then exits at expiry.
+
+Previously the contract had to outlive the half-life, which pushed short trades
+onto far-dated contracts — an 11-bar trade could land on a 40-day contract and
+capture only about half the time decay it had sold.
 
 ```bash
 # vol is the default; pass --strike-rule legacy for the old fixed-offset rule

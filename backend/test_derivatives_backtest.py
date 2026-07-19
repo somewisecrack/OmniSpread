@@ -88,21 +88,27 @@ def test_whole_lot_hedge_prefers_compact_approximations():
     assert whole_lot_hedge(0.8, 1, 1) == (4, 5)
 
 
-def test_futures_options_selects_expiry_after_exit_and_protective_options():
+def test_futures_options_uses_nearest_expiry_and_vol_scaled_protection():
+    """Nearest expiry (02-Jun) is taken even though it precedes the half-life exit.
+
+    The protective options are placed one expected move out rather than a flat
+    2% of spot: with an ATM straddle of 40 the move is ~50, so AAA (spot 100)
+    protects at 50 PE and BBB (spot 200) at 250 CE.
+    """
     result = run_derivatives_backtest(
         x="AAA.NS", y="BBB.NS", qty=1.5, direction="SHORT_SPREAD",
         half_life=2, end_date="2026-06-01", strategy="futures_options",
         fetch_future=_fetch_future, fetch_option=_fetch_option,
     )
     assert (result["x_lots"], result["y_lots"]) == (3, 5)
-    assert len(result["points"]) == 5
-    assert result["half_life_time"] == int(pd.Timestamp("2026-06-03").timestamp())
-    assert result["expiry_time"] == int(pd.Timestamp("2026-06-30").timestamp())
-    assert {leg["expiry"] for leg in result["legs"]} == {"30-Jun-2026"}
+    assert {leg["expiry"] for leg in result["legs"]} == {"02-Jun-2026"}
+    # Half-life of 2 bars outlives the contract, so the trade exits at expiry.
+    assert result["half_life_time"] == int(pd.Timestamp("2026-06-02").timestamp())
+    assert result["expiry_time"] == int(pd.Timestamp("2026-06-02").timestamp())
     option_legs = [leg for leg in result["legs"] if leg["instrument"] in {"PE", "CE"}]
     assert [(leg["symbol"], leg["side"], leg["instrument"], leg["strike"]) for leg in option_legs] == [
-        ("AAA", "BUY", "PE", 100.0),
-        ("BBB", "BUY", "CE", 200.0),
+        ("AAA", "BUY", "PE", 50.0),
+        ("BBB", "BUY", "CE", 250.0),
     ]
 
 
@@ -121,12 +127,29 @@ def test_credit_spreads_buy_hedges_are_three_strikes_further_otm():
     assert result["points"][0]["pnl"] == 0
     assert result["points"][0]["pnl_pct"] == 0
     assert all("half_life_price" in leg and "expiry_price" in leg for leg in result["legs"])
-    assert [leg["half_life_price"] for leg in result["legs"]] == [22.0, 22.3, 22.0, 22.3]
-    assert [leg["expiry_price"] for leg in result["legs"]] == [24.0, 24.3, 24.0, 24.3]
+    # Nearest expiry is 02-Jun, so the half-life exit and expiry coincide.
+    assert [leg["half_life_price"] for leg in result["legs"]] == [21.0, 21.3, 21.0, 21.3]
+    assert [leg["expiry_price"] for leg in result["legs"]] == [21.0, 21.3, 21.0, 21.3]
     assert result["margin"]["estimated_margin"] > 0
     assert result["half_life_pnl_pct"] == round(
         result["half_life_pnl"] * 100 / result["margin"]["estimated_margin"], 4
     )
+
+
+def test_nearest_expiry_is_used_even_when_shorter_than_the_half_life():
+    """A 20-bar half-life must not skip the 02-Jun contract for the 30-Jun one.
+
+    Holding a far-dated contract for a short trade gives away most of the time
+    decay, so the nearest expiry wins and the trade exits when it expires.
+    """
+    result = run_derivatives_backtest(
+        x="AAA.NS", y="BBB.NS", qty=1.5, direction="SHORT_SPREAD",
+        half_life=20, end_date="2026-06-01", strategy="credit_spreads",
+        fetch_future=_fetch_future, fetch_option=_fetch_option,
+    )
+    assert {leg["expiry"] for leg in result["legs"]} == {"02-Jun-2026"}
+    assert result["half_life_time"] == result["expiry_time"]
+    assert result["half_life_time"] == int(pd.Timestamp("2026-06-02").timestamp())
 
 
 def test_current_credit_structure_uses_whole_lots_and_correct_spread_sides():

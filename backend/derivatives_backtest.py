@@ -308,6 +308,39 @@ def _step_strike(
     )
 
 
+def _protective_contract(
+    option_df: pd.DataFrame,
+    expiry: pd.Timestamp,
+    option_type: str,
+    spot: float,
+    *,
+    strike_rule: str = STRIKE_RULE_VOL,
+    sd: float = DEFAULT_SOLD_SD,
+    snapshot: pd.DataFrame | None = None,
+) -> Contract:
+    """The long protective option bought against a futures leg.
+
+    Placed the same distance out as a credit spread's sold strike, so the hedge
+    scales with volatility and tenor instead of a flat percentage of spot.
+    """
+    if strike_rule == STRIKE_RULE_VOL:
+        try:
+            entry = snapshot if snapshot is not None else _entry_rows(option_df, expiry)
+            move = _atm_expected_move(entry, spot, expiry)
+            return _choose_option_by_move(
+                option_df, expiry, option_type, spot, sd, move, snapshot=snapshot
+            )
+        except ValueError as exc:
+            logger.warning(
+                "Volatility-scaled protective strike unavailable for %s %s (%s); "
+                "using the legacy rule.",
+                option_type, expiry.strftime("%d-%b-%Y"), exc,
+            )
+
+    offset = -0.02 if option_type == "PE" else 0.02
+    return _choose_option(option_df, expiry, option_type, spot, offset, snapshot=snapshot)
+
+
 def _credit_spread_contracts(
     option_df: pd.DataFrame,
     expiry: pd.Timestamp,
@@ -533,14 +566,15 @@ def run_derivatives_backtest(
     hedge_sd: float = DEFAULT_HEDGE_SD,
 ) -> dict:
     start = datetime.strptime(end_date, "%Y-%m-%d")
-    # Half-life is measured in daily trading bars for derivatives.
-    required_expiry = pd.Timestamp(start) + pd.offsets.BDay(half_life)
-    # Fetch far enough to include the monthly contract's expiry bar as well as
-    # the half-life exit. The nearest eligible monthly expiry can be several
-    # weeks after the required exit date.
+    # Always trade the nearest listed expiry, even when it falls before the
+    # half-life exit - the trade then simply exits at expiry. Requiring the
+    # contract to outlive the half-life pushed short trades onto contracts
+    # several times their horizon, giving away most of the time decay.
+    required_expiry = pd.Timestamp(start)
+    # Reach past the nearest expiry so its final bar is included.
     fetch_end = max(
         start + timedelta(days=half_life * 3 + 14),
-        required_expiry.to_pydatetime() + timedelta(days=40),
+        start + timedelta(days=45),
     )
 
     assets = {
@@ -576,8 +610,10 @@ def run_derivatives_backtest(
 
         if strategy == "futures_options":
             opt_type = "PE" if sign > 0 else "CE"
-            offset = -0.02 if opt_type == "PE" else 0.02
-            contract = _choose_option(asset["options"], expiry, opt_type, asset["spot"], offset)
+            contract = _protective_contract(
+                asset["options"], expiry, opt_type, asset["spot"],
+                strike_rule=strike_rule, sd=sold_sd,
+            )
             option = _price_series(asset["options"], contract)
             name = f"{key}_{opt_type.lower()}"
             leg_series[name] = (option - option.iloc[0]) * contract.lot_size * count
