@@ -36,49 +36,66 @@ def _scan_floor(leg: dict) -> float:
     return INDEX_PRICE_SCAN_FLOOR if leg.get("is_index") else STOCK_PRICE_SCAN_FLOOR
 
 
+SCAN_POINTS = 9
+
+
+def _leg_pnl_at(leg: dict, stressed_spot: float) -> float:
+    """Leg P&L if the underlying were at `stressed_spot` at expiry.
+
+    Options are valued at intrinsic, which is the conservative reading: any
+    remaining time value would only reduce the loss.
+    """
+    quantity = int(leg["lot_size"]) * int(leg["lots"])
+    direction = 1.0 if leg["side"] == "BUY" else -1.0
+
+    if leg["instrument"] == "FUT":
+        move = stressed_spot - float(leg["spot"])
+        return direction * move * quantity
+
+    strike = float(leg["strike"])
+    intrinsic = (
+        max(strike - stressed_spot, 0.0) if leg["instrument"] == "PE"
+        else max(stressed_spot - strike, 0.0)
+    )
+    return direction * (intrinsic - float(leg["price"])) * quantity
+
+
 def _group_span_estimate(legs: list[dict]) -> float:
-    futures = [leg for leg in legs if leg["instrument"] == "FUT"]
-    options = [leg for leg in legs if leg["instrument"] in {"CE", "PE"}]
+    """Worst-case loss for one underlying, scanned across its price range.
 
-    if futures and not options:
-        return sum(
-            _scan_floor(leg) * float(leg["spot"]) * int(leg["lot_size"]) * int(leg["lots"])
-            for leg in futures
-        )
+    Every leg in the group is revalued together at each scanned price, so
+    futures, protective options and spreads offset one another as they actually
+    would. The previous implementation looked only at the first future and the
+    first option, which silently ignored every additional leg - fine for a plain
+    spread, wrong for anything with more than two legs on the same underlying.
+    """
+    if not legs:
+        return 0.0
 
-    if futures and options:
-        future = futures[0]
-        option = options[0]
-        quantity = int(future["lot_size"]) * int(future["lots"])
-        spot = float(future["spot"])
-        scan_floor = _scan_floor(future)
-        stressed_spot = spot * (
-            1.0 - scan_floor if future["side"] == "BUY"
-            else 1.0 + scan_floor
-        )
-        future_pnl = (
-            stressed_spot - spot if future["side"] == "BUY"
-            else spot - stressed_spot
-        ) * quantity
-        strike = float(option["strike"])
-        intrinsic = (
-            max(strike - stressed_spot, 0.0) if option["instrument"] == "PE"
-            else max(stressed_spot - strike, 0.0)
-        )
-        option_pnl = (intrinsic - float(option["price"])) * quantity
-        return max(0.0, -(future_pnl + option_pnl))
+    spot = float(legs[0]["spot"])
+    scan_floor = _scan_floor(legs[0])
+    strikes = [float(leg["strike"]) for leg in legs if leg["instrument"] in {"CE", "PE"}]
 
-    short_options = [leg for leg in options if leg["side"] == "SELL"]
-    long_options = [leg for leg in options if leg["side"] == "BUY"]
-    if short_options and long_options:
-        short = short_options[0]
-        hedge = long_options[0]
-        quantity = int(short["lot_size"]) * int(short["lots"])
-        width = abs(float(short["strike"]) - float(hedge["strike"]))
-        net_credit = float(short["price"]) - float(hedge["price"])
-        return max(0.0, (width - net_credit) * quantity)
+    if any(leg["instrument"] == "FUT" for leg in legs):
+        # A futures leg loses without bound, so scan only the regulatory range.
+        low, high = spot * (1.0 - scan_floor), spot * (1.0 + scan_floor)
+    else:
+        # Option spreads are bounded, so the true worst case can be taken rather
+        # than whatever happens to fall inside the scan range. Stopping at the
+        # scan range would under-charge a spread whose long leg sits outside it.
+        low = min([spot, *strikes]) * 0.5
+        high = max([spot, *strikes]) * 1.5
 
-    return 0.0
+    # Payoff kinks sit at the strikes, so evaluate them explicitly as well.
+    probes = [
+        low + (high - low) * step / (SCAN_POINTS - 1) for step in range(SCAN_POINTS)
+    ] + [strike for strike in strikes if low <= strike <= high]
+
+    worst = min(
+        sum(_leg_pnl_at(leg, stressed_spot) for leg in legs)
+        for stressed_spot in probes
+    )
+    return max(0.0, -worst)
 
 
 def estimate_margin(legs: list[dict]) -> dict:

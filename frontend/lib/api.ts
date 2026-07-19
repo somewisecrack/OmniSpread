@@ -54,7 +54,7 @@ export interface BacktestRequest {
     strategy: BacktestStrategy;
 }
 
-export type BacktestStrategy = "equity" | "futures" | "futures_options" | "credit_spreads";
+export type BacktestStrategy = "equity" | "futures" | "futures_options" | "credit_spreads" | "collar";
 
 export interface BacktestPoint {
     time: number;

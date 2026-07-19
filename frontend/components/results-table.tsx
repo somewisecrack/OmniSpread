@@ -427,7 +427,8 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
                                 ["equity", "Equities only", "Original cash-equity pair"],
                                 ["futures", "Futures only", "Nearest eligible monthly futures"],
                                 ["futures_options", "Futures + option buy", "Future with a 2% OTM protective option"],
-                                ["credit_spreads", "Credit spreads", "Bull put / bear call spreads with three-strike hedges"],
+                                ["credit_spreads", "Credit spreads", "Volatility-scaled spreads, hedge picked on credit per rupee of margin"],
+                                ["collar", "Collar + income", "Future, protective option, and a credit spread on the opposite side"],
                             ] as [BacktestStrategy, string, string][]).map(([value, label, detail]) => {
                                 const disabled = value !== "equity" && interval !== "1d";
                                 return (

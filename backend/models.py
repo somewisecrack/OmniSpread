@@ -18,7 +18,7 @@ class BacktestRequest(BaseModel):
     interval: str = "1d"
     half_life: int
     end_date: str
-    strategy: Literal["equity", "futures", "futures_options", "credit_spreads"] = "equity"
+    strategy: Literal["equity", "futures", "futures_options", "credit_spreads", "collar"] = "equity"
     strike_rule: Literal["legacy", "vol"] = "vol"
     sold_sd: float = 1.0
     hedge_sd: float = 2.5

@@ -152,6 +152,59 @@ def test_nearest_expiry_is_used_even_when_shorter_than_the_half_life():
     assert result["half_life_time"] == int(pd.Timestamp("2026-06-02").timestamp())
 
 
+def test_group_span_nets_every_leg_on_the_same_underlying():
+    """A short spread against a future must reduce the scanned worst case.
+
+    The previous estimator read only futures[0] and options[0], so any leg
+    beyond the first two was silently ignored and a collar priced identically
+    to a bare protected future.
+    """
+    from margin_estimator import _group_span_estimate
+
+    spot, lot = 1000.0, 100
+    def leg(instrument, side, strike, price):
+        return {"asset": "x", "symbol": "AAA", "instrument": instrument, "side": side,
+                "lots": 1, "lot_size": lot, "strike": strike, "spot": spot, "price": price}
+
+    future_only = [leg("FUT", "BUY", 0, spot)]
+    protected = future_only + [leg("PE", "BUY", 950, 12.0)]
+    collar = protected + [leg("CE", "SELL", 1060, 8.0), leg("CE", "BUY", 1100, 3.0)]
+
+    assert _group_span_estimate(protected) < _group_span_estimate(future_only)
+    # The short call spread brings in premium, lowering the worst case further.
+    assert _group_span_estimate(collar) < _group_span_estimate(protected)
+
+
+def test_collar_puts_protection_and_income_on_opposite_sides():
+    """Long future -> protective PE and a short CE spread, and vice versa.
+
+    Selling the same side the future leans on would double the directional bet,
+    and at matching distances the protective long would cancel the spread's
+    short leg outright.
+    """
+    result = run_derivatives_backtest(
+        x="AAA.NS", y="BBB.NS", qty=1.5, direction="SHORT_SPREAD",
+        half_life=2, end_date="2026-06-01", strategy="collar",
+        fetch_future=_fetch_future, fetch_option=_fetch_option,
+    )
+    x_legs = [leg for leg in result["legs"] if leg["asset"] == "x"]
+    y_legs = [leg for leg in result["legs"] if leg["asset"] == "y"]
+
+    # x is the long future leg
+    assert (x_legs[0]["instrument"], x_legs[0]["side"]) == ("FUT", "BUY")
+    assert (x_legs[1]["instrument"], x_legs[1]["side"]) == ("PE", "BUY")   # protection
+    assert [(leg["instrument"], leg["side"]) for leg in x_legs[2:]] == [("CE", "SELL"), ("CE", "BUY")]
+
+    # y is the short future leg, so the sides mirror
+    assert (y_legs[0]["instrument"], y_legs[0]["side"]) == ("FUT", "SELL")
+    assert (y_legs[1]["instrument"], y_legs[1]["side"]) == ("CE", "BUY")   # protection
+    assert [(leg["instrument"], leg["side"]) for leg in y_legs[2:]] == [("PE", "SELL"), ("PE", "BUY")]
+
+    # Nothing cancels: the protective strike differs from the short strike.
+    assert x_legs[1]["strike"] != x_legs[2]["strike"]
+    assert y_legs[1]["strike"] != y_legs[2]["strike"]
+
+
 def test_current_credit_structure_uses_whole_lots_and_correct_spread_sides():
     result = build_credit_spread_structure(
         x="AAA.NS", y="BBB.NS", qty=1.5, direction="SHORT_SPREAD",

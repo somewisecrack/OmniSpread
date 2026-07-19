@@ -701,7 +701,7 @@ def run_derivatives_backtest(
         expiry = asset["expiry"]
         future_lot = asset["future_lot"]
 
-        if strategy in {"futures", "futures_options"}:
+        if strategy in {"futures", "futures_options", "collar"}:
             future = asset["future"]
             name = f"{key}_future"
             leg_series[name] = sign * (future - future.iloc[0]) * future_lot * count
@@ -729,6 +729,52 @@ def run_derivatives_backtest(
                 "spot": asset["spot"], "price": float(option.iloc[0]),
                 "is_index": asset["is_index"],
             })
+
+        if strategy == "collar":
+            # Protection sits on the side the future is exposed to, and the
+            # income spread on the opposite side. Selling the same side the
+            # future already leans on would double the directional bet, and with
+            # matching distances the protective long and the spread's short leg
+            # would simply cancel.
+            protect_type = "PE" if sign > 0 else "CE"
+            protect = _protective_contract(
+                asset["options"], expiry, protect_type, asset["spot"],
+                strike_rule=strike_rule, sd=sold_sd,
+            )
+            protect_prices = _price_series(asset["options"], protect)
+            leg_series[f"{key}_{protect_type.lower()}_protect"] = (
+                (protect_prices - protect_prices.iloc[0]) * protect.lot_size * count
+            )
+            leg_meta.append({
+                "asset": key, "symbol": symbol, "instrument": protect_type, "side": "BUY",
+                "lots": count, "lot_size": protect.lot_size, "strike": protect.strike,
+                "expiry": expiry.strftime("%d-%b-%Y"), "spot": asset["spot"],
+                "price": float(protect_prices.iloc[0]), "is_index": asset["is_index"],
+            })
+
+            income_type = "CE" if sign > 0 else "PE"
+            sold, hedge = _credit_spread_contracts(
+                asset["options"], expiry, income_type, asset["spot"],
+                strike_rule=strike_rule, sold_sd=sold_sd, hedge_sd=hedge_sd,
+                is_index=asset["is_index"],
+            )
+            sold_prices = _price_series(asset["options"], sold)
+            hedge_prices = _price_series(asset["options"], hedge)
+            leg_series[f"{key}_{income_type.lower()}_short"] = (
+                -(sold_prices - sold_prices.iloc[0]) * sold.lot_size * count
+            )
+            leg_series[f"{key}_{income_type.lower()}_hedge"] = (
+                (hedge_prices - hedge_prices.iloc[0]) * hedge.lot_size * count
+            )
+            for contract, side, prices in (
+                (sold, "SELL", sold_prices), (hedge, "BUY", hedge_prices)
+            ):
+                leg_meta.append({
+                    "asset": key, "symbol": symbol, "instrument": income_type, "side": side,
+                    "lots": count, "lot_size": contract.lot_size, "strike": contract.strike,
+                    "expiry": expiry.strftime("%d-%b-%Y"), "spot": asset["spot"],
+                    "price": float(prices.iloc[0]), "is_index": asset["is_index"],
+                })
 
         if strategy == "credit_spreads":
             opt_type = "PE" if sign > 0 else "CE"
