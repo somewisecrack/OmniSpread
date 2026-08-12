@@ -53,12 +53,28 @@ def _fmt_cell(value, width, align):
     return f"{text:{align}{width}}"
 
 
+def _columns_for(results):
+    """Base columns, plus the IVP columns only when the rows carry them.
+
+    IVP is present exclusively on the standard 1y/1d scan; for every other scan
+    the keys are absent and the columns must not appear at all.
+    """
+    columns = list(COLUMNS)
+    if results and "x_atm_ivp_250d" in results[0]:
+        columns += [
+            ("x_atm_ivp_250d", "X IVP250", 9, ">"),
+            ("y_atm_ivp_250d", "Y IVP250", 9, ">"),
+        ]
+    return columns
+
+
 def _render_table(results):
-    header = "  ".join(_fmt_cell(h, w, a) for _, h, w, a in COLUMNS)
+    columns = _columns_for(results)
+    header = "  ".join(_fmt_cell(h, w, a) for _, h, w, a in columns)
     print(header)
     print("-" * len(header))
     for r in results:
-        row = "  ".join(_fmt_cell(r.get(key, ""), w, a) for key, _, w, a in COLUMNS)
+        row = "  ".join(_fmt_cell(r.get(key, ""), w, a) for key, _, w, a in columns)
         print(row)
 
 

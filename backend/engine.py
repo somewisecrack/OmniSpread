@@ -580,5 +580,41 @@ class OmniSpreadEngine:
             except Exception as e:
                 logger.warning(f"  ✗ MC failed for {item['x']}/{item['y']}: {e}")
 
+        results = sorted(results, key=lambda x: x["prob_profit"], reverse=True)
+        self._attach_atm_ivp(results)
         logger.info(f"Scan complete. {len(results)} pairs with full metrics.")
-        return sorted(results, key=lambda x: x["prob_profit"], reverse=True)
+        return results
+
+    def _attach_atm_ivp(self, results):
+        """Attach display-only X/Y ATM IVP (250d) to each result row.
+
+        Runs only for the standard live daily scan - exactly period "1y",
+        interval "1d", and no explicit custom date range. For every other scan
+        the IVP keys are absent entirely (no zero, no placeholder). IVP is
+        informational: it is computed after ranking and never influences pair
+        selection, ordering, probabilities, half-life, or anything downstream.
+        """
+        eligible = (
+            self.period == "1y"
+            and self.interval == "1d"
+            and not (self.start_date and self.end_date)
+        )
+        if not eligible or not results:
+            return
+
+        try:
+            from ivp import compute_ivp_map, format_ivp
+        except Exception:  # noqa: BLE001 - IVP must never break a scan
+            logger.warning("IVP module unavailable; skipping IVP.")
+            return
+
+        tickers = {row["x"] for row in results} | {row["y"] for row in results}
+        try:
+            ivp_map = compute_ivp_map(tickers)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"IVP computation failed; leaving it off: {exc}")
+            return
+
+        for row in results:
+            row["x_atm_ivp_250d"] = format_ivp(ivp_map.get(row["x"]))
+            row["y_atm_ivp_250d"] = format_ivp(ivp_map.get(row["y"]))

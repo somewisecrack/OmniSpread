@@ -122,6 +122,11 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
             ticker.endsWith(".NS") || ["^NSEI", "^NSEBANK", "NIFTY_FIN_SERVICE.NS"].includes(ticker)
         );
 
+    // IVP is display-only and appears only when the backend sent it (the
+    // standard 1y/1d scan). It is deliberately NOT part of the sortable
+    // `columns` array — ranking by IVP is out of scope.
+    const hasIvp = results.length > 0 && results[0].x_atm_ivp_250d !== undefined;
+
     const columns: { key: SortKey; label: string; width?: string }[] = [
         { key: "combo", label: "Trade" },
         { key: "method", label: "Method", width: "80px" },
@@ -202,6 +207,11 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
                                     {sortKey === col.key && (
                                         <span style={{ marginLeft: "3px" }}>{sortAsc ? "↑" : "↓"}</span>
                                     )}
+                                </th>
+                            ))}
+                            {hasIvp && (["X ATM IVP (250d)", "Y ATM IVP (250d)"] as const).map((label) => (
+                                <th key={label} title="Display-only ATM IV percentile over the last 250 trading days" style={{ padding: "12px 10px", textAlign: "center", fontSize: "10.5px", fontWeight: 600, color: "var(--color-text-secondary)", width: "72px", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                                    {label}
                                 </th>
                             ))}
                             <th style={{ padding: "12px 10px", textAlign: "center", fontSize: "10.5px", fontWeight: 600, color: "var(--color-text-secondary)", width: "86px", textTransform: "uppercase", letterSpacing: "0.04em" }}>
@@ -356,6 +366,18 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
                                 }}>
                                     {res.same_sector}
                                 </td>
+                                {/* ATM IVP (250d) — display only */}
+                                {hasIvp && [res.x_atm_ivp_250d, res.y_atm_ivp_250d].map((value, idx) => (
+                                    <td key={idx} style={{
+                                        padding: "12px 10px",
+                                        textAlign: "center",
+                                        fontFamily: "var(--font-mono)",
+                                        fontSize: "11.5px",
+                                        color: value === "Unavailable" ? "var(--color-text-muted)" : "var(--color-text-secondary)",
+                                    }}>
+                                        {value ?? "—"}
+                                    </td>
+                                ))}
                                 <td style={{ padding: "12px 10px", textAlign: "center" }}>
                                     <div style={{ display: "grid", gap: "6px" }}>
                                         {isBacktestScenario ? (

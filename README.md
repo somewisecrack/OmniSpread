@@ -13,6 +13,43 @@
 - **Extreme Z Tracking** — Detects if current spread is at historical extreme within half-life window
 - **Industry Classification** — Same-sector flagging via yfinance
 - **8 Built-in Presets** — US (Mega Tech, Financials, Energy, Healthcare, Consumer, Semiconductors) + India (Nifty 50, Nifty F&O)
+- **ATM IV Percentile (display-only)** — X/Y ATM IVP over 250 trading days, shown on the standard 1y/1d scan (see below)
+
+## ATM IV Percentile (IVP)
+
+The standard live daily scan (**exactly `period="1y"` and `interval="1d"`**) appends two
+**display-only** columns to each pair: `X ATM IVP (250d)` and `Y ATM IVP (250d)`. Each is
+that ticker's current ATM implied volatility ranked against its own prior year:
+
+```
+IVP = 100 × count(prior valid ATM-IV observations < current ATM IV)
+          / count(prior valid ATM-IV observations)
+```
+
+**It is informational only.** IVP never affects cointegration, pair eligibility, ranking,
+Monte Carlo probability, half-life, capital, option-leg selection, or margin — it is computed
+*after* ranking and only attached to the output. It is a genuine IV percentile, not India VIX,
+historical vol, the NSE daily-volatility report, IV rank, or IV/HV.
+
+For every other scan — `3y`, `60d`, intraday, custom-date ranges, and all backtests — the IVP
+columns are **absent entirely** (no zero, placeholder, or `N/A`).
+
+**How each observation is built.** Today's option contract did not exist a year ago, so every
+historical trading day is reconstructed independently: that day's then-current **monthly** expiry
+(the last expiry of a calendar month; weeklies excluded), at least `MIN_DTE_CALENDAR_DAYS` from
+expiry; that day's ATM strike from that day's underlying; that day's actual CE and PE closing
+prices; and the implied volatility solved from those prices (Black-Scholes inverted with scipy's
+Brent method). CE and PE IV are averaged into one daily observation, kept only when **both** solve.
+
+- **Source:** NSE via `nselib` (`nse_client`) only — the same approved source the rest of the app
+  uses. No Yahoo, Sensibull, browser automation, or hardcoded fallback. If data is unavailable,
+  rate-limited, or invalid for a ticker, that ticker shows **`Unavailable`** — never a substitute.
+- **Risk-free rate:** the named `RISK_FREE_RATE` constant (6.5%).
+- **Minimum sample:** `MIN_VALID_OBSERVATIONS` (60) valid priors, else `Unavailable`.
+- **Cache:** compact per-observation records under `backend/.ivp_cache/` (gitignored), keyed by
+  ticker and date so a day is downloaded at most once, pruned after `CACHE_RETENTION_DAYS`.
+
+All of the above live in `backend/ivp.py`.
 
 ## Stack
 

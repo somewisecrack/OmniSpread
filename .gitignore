@@ -28,3 +28,6 @@ out/
 # Data
 *.pkl
 *.pickle
+
+# IVP observation cache (reproducible; rebuilt on demand)
+.ivp_cache/

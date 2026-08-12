@@ -32,6 +32,10 @@ export interface PairResult {
     profitable_since_extreme: string;
     pnl_since_extreme: number;
     historical_z_scores: { time: number; value: number }[];
+    // Display-only ATM IV percentile; present only on the standard 1y/1d scan.
+    // A string like "72.0%" or "Unavailable"; undefined for every other scan.
+    x_atm_ivp_250d?: string;
+    y_atm_ivp_250d?: string;
 }
 
 export interface TaskResult {

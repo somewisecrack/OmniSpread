@@ -58,6 +58,12 @@ class PairResult(BaseModel):
     profitable_since_extreme: str
     pnl_since_extreme: float
     historical_z_scores: list[dict] = []
+    # NOTE: the display-only ATM IVP fields (x_atm_ivp_250d / y_atm_ivp_250d) are
+    # intentionally NOT declared here. They are present only on the standard 1y/1d
+    # scan and must be ABSENT for every other scan. Declaring them with a default
+    # would make a pydantic response_model emit them as null on ineligible scans,
+    # violating that contract. The /results route returns the raw engine dict, so
+    # the keys are genuinely present-or-absent as required.
 
 
 class TaskResponse(BaseModel):
