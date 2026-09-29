@@ -461,9 +461,18 @@ class OmniSpreadEngine:
             (spread.iloc[-1] - mavg.iloc[-1]) / (mstd.iloc[-1] if mstd.iloc[-1] != 0 else 1e-12)
         ), 1)
 
-        move = round(float(-z_display * mstd.iloc[-1]), 2) if (not np.isnan(z_display) and mstd.iloc[-1]) else 0.0
+        move_raw = float(-z_display * mstd.iloc[-1]) if (not np.isnan(z_display) and mstd.iloc[-1]) else 0.0
+        move = round(move_raw, 2)
         unit = round(float(abs(beta_ts.iloc[-1] * px) + abs(py)), 2) if not np.isnan(beta_ts.iloc[-1]) else 0.0
-        exp_r = abs(round(float(move * 100 / unit), 1)) if unit else 0.0
+        if item.get("price_basis", self.price_basis) == "log":
+            # On log-basis scans, the spread move is in log-return units, not
+            # raw currency. Normalize by gross log exposure (1 Y leg + beta X
+            # leg) instead of dividing by raw dollar/rupee notional, otherwise
+            # valid log opportunities round down to 0.00%.
+            gross_log_exposure = 1.0 + abs(float(beta_ts.iloc[-1])) if not np.isnan(beta_ts.iloc[-1]) else 0.0
+            exp_r = abs(round(float(move_raw * 100 / gross_log_exposure), 1)) if gross_log_exposure else 0.0
+        else:
+            exp_r = abs(round(float(move_raw * 100 / unit), 1)) if unit else 0.0
 
         hurst_val = self.hurst(spread.values)
 
