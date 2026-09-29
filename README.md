@@ -13,7 +13,7 @@
 - **Extreme Z Tracking** — Detects if current spread is at historical extreme within half-life window
 - **Industry Classification** — Same-sector flagging via yfinance
 - **8 Built-in Presets** — US (Mega Tech, Financials, Energy, Healthcare, Consumer, Semiconductors) + India (Nifty 50, Nifty F&O)
-- **ATM IV Percentile (display-only)** — X/Y ATM IVP over 250 trading days, shown on the standard 1y/1d scan (see below)
+- **ATM IV Percentile + VRP (display-only)** — X/Y ATM IVP over 250 trading days and the variance risk premium, shown on the standard 1y/1d scan (see below)
 
 ## ATM IV Percentile (IVP)
 
@@ -31,8 +31,22 @@ Monte Carlo probability, half-life, capital, option-leg selection, or margin —
 *after* ranking and only attached to the output. It is a genuine IV percentile, not India VIX,
 historical vol, the NSE daily-volatility report, IV rank, or IV/HV.
 
+Alongside each IVP, the scan shows a display-only **VRP** (variance risk premium):
+
+```
+VRP = current ATM IV − realised volatility   (annualised volatility points)
+```
+
+realised vol measured over `VRP_REALIZED_WINDOW` (21 trading days ≈ one monthly option
+cycle), from the same daily closes the scan already fetched — no extra download. **Positive
+VRP** means options are richer than what the stock has actually delivered (vol is expensive →
+selling premium, e.g. **credit spreads**, is favoured); **negative VRP** means options are cheap
+(→ **futures + long option** is favoured). VRP is the direct signal for that strategy fork; IVP
+is context (where vol sits in its own year). Both are per-leg — for a pairs trade the spread's
+vol also depends on the correlation between the legs, so read them as a gate, not a verdict.
+
 For every other scan — `3y`, `60d`, intraday, custom-date ranges, and all backtests — the IVP
-columns are **absent entirely** (no zero, placeholder, or `N/A`).
+**and VRP** columns are **absent entirely** (no zero, placeholder, or `N/A`).
 
 **How each observation is built.** Today's option contract did not exist a year ago, so every
 historical trading day is reconstructed independently: that day's then-current **monthly** expiry

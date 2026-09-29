@@ -3,10 +3,10 @@
 import { useState, useEffect } from "react";
 import ReactDatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
-import { getPresets, type Presets } from "@/lib/api";
+import { getPresets, type Presets, type PriceBasis } from "@/lib/api";
 
 interface ScanFormProps {
-    onScan: (tickers: string[], period: string, interval?: string, startDate?: string, endDate?: string) => void;
+    onScan: (tickers: string[], period: string, interval?: string, startDate?: string, endDate?: string, priceBasis?: PriceBasis) => void;
     onReset: () => void;
     isScanning: boolean;
 }
@@ -71,6 +71,7 @@ export default function ScanForm({ onScan, onReset, isScanning }: ScanFormProps)
     const [tickerInput, setTickerInput] = useState("");
     const [period, setPeriod] = useState("3y");
     const [interval, setIntervalVal] = useState("1d");
+    const [priceBasis, setPriceBasis] = useState<PriceBasis>("raw");
     const [startDate, setStartDate] = useState<Date | null>(null);
     const [endDate, setEndDate] = useState<Date | null>(null);
     const [presets, setPresets] = useState<Presets>({});
@@ -136,6 +137,7 @@ export default function ScanForm({ onScan, onReset, isScanning }: ScanFormProps)
         setTickerInput("");
         setPeriod("3y");
         setIntervalVal("1d");
+        setPriceBasis("raw");
         setStartDate(null);
         setEndDate(null);
         setActivePreset(null);
@@ -152,7 +154,7 @@ export default function ScanForm({ onScan, onReset, isScanning }: ScanFormProps)
             if (period !== "60d" && period !== "6mo" && period !== "1y" && period !== "custom") {
                 finalInterval = "1d";
             }
-            onScan(tickers, period, finalInterval, startStr, endStr);
+            onScan(tickers, period, finalInterval, startStr, endStr, priceBasis);
         }
     };
 
@@ -342,6 +344,50 @@ export default function ScanForm({ onScan, onReset, isScanning }: ScanFormProps)
                             </div>
                         </div>
                     )}
+
+                    {/* Price Basis Selection */}
+                    <div style={{ marginTop: "12px", animation: "fadeIn 0.2s" }}>
+                        <label style={{
+                            display: "block",
+                            fontSize: "12px",
+                            fontWeight: 600,
+                            color: "var(--color-text-secondary)",
+                            textTransform: "uppercase",
+                            letterSpacing: "0.05em",
+                            marginBottom: "8px",
+                        }}>
+                            Cointegration Price Basis
+                        </label>
+                        <div style={{ display: "flex", gap: "6px" }}>
+                            {(["raw", "log"] as PriceBasis[]).map((basis) => (
+                                <button
+                                    key={basis}
+                                    onClick={() => setPriceBasis(basis)}
+                                    title={basis === "raw" ? "Use raw adjusted close prices" : "Use log(adjusted close) for CADF, Johansen, beta, spread, Z-score and half-life"}
+                                    style={{
+                                        padding: "8px 16px",
+                                        borderRadius: "8px",
+                                        fontSize: "13px",
+                                        fontWeight: 500,
+                                        cursor: "pointer",
+                                        transition: "all 0.2s",
+                                        border: priceBasis === basis
+                                            ? "1px solid var(--color-accent-blue)"
+                                            : "1px solid var(--color-border)",
+                                        background: priceBasis === basis
+                                            ? "rgba(99, 102, 241, 0.2)"
+                                            : "transparent",
+                                        color: priceBasis === basis
+                                            ? "var(--color-accent-cyan)"
+                                            : "var(--color-text-muted)",
+                                        textTransform: "uppercase",
+                                    }}
+                                >
+                                    {basis}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
 
                     {/* Interval Selection */}
                     {(period === "60d" || period === "6mo" || period === "1y" || period === "custom") && (

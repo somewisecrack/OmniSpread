@@ -4,7 +4,7 @@ import { useState } from "react";
 import ScanForm from "@/components/scan-form";
 import ResultsTable from "@/components/results-table";
 import PairDetailModal from "@/components/pair-detail-modal";
-import { startScan, pollResults, type PairResult } from "@/lib/api";
+import { startScan, pollResults, type PairResult, type PriceBasis } from "@/lib/api";
 
 export default function Home() {
   const [results, setResults] = useState<PairResult[]>([]);
@@ -23,7 +23,7 @@ export default function Home() {
     setCurrentEndDate("");
   };
 
-  const handleScan = async (tickers: string[], period: string, interval?: string, startDate?: string, endDate?: string) => {
+  const handleScan = async (tickers: string[], period: string, interval?: string, startDate?: string, endDate?: string, priceBasis: PriceBasis = "raw") => {
     setCurrentInterval(interval || "1d");
     setCurrentEndDate(endDate || "");
     setIsScanning(true);
@@ -32,7 +32,7 @@ export default function Home() {
     setScanStatus("Starting scan...");
 
     try {
-      const { task_id } = await startScan({ tickers, period, interval, start_date: startDate, end_date: endDate });
+      const { task_id } = await startScan({ tickers, period, interval, start_date: startDate, end_date: endDate, price_basis: priceBasis });
       setScanStatus("Scanning pairs — this may take a moment...");
 
       const result = await pollResults(task_id, (update) => {

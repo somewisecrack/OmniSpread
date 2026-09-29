@@ -31,3 +31,6 @@ out/
 
 # IVP observation cache (reproducible; rebuilt on demand)
 .ivp_cache/
+
+# Ad-hoc research artifacts (not production)
+research/

@@ -8,6 +8,7 @@ class ScanRequest(BaseModel):
     interval: str = "1d"
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    price_basis: Literal["raw", "log"] = "raw"
 
 
 class BacktestRequest(BaseModel):
@@ -42,6 +43,7 @@ class PairResult(BaseModel):
     direction: str = ""
     combo: str
     method: str
+    price_basis: Literal["raw", "log"] = "raw"
     price_corr: float
     z_score: float
     half_life: int
@@ -58,12 +60,12 @@ class PairResult(BaseModel):
     profitable_since_extreme: str
     pnl_since_extreme: float
     historical_z_scores: list[dict] = []
-    # NOTE: the display-only ATM IVP fields (x_atm_ivp_250d / y_atm_ivp_250d) are
-    # intentionally NOT declared here. They are present only on the standard 1y/1d
-    # scan and must be ABSENT for every other scan. Declaring them with a default
-    # would make a pydantic response_model emit them as null on ineligible scans,
-    # violating that contract. The /results route returns the raw engine dict, so
-    # the keys are genuinely present-or-absent as required.
+    # NOTE: the display-only volatility fields (x_atm_ivp_250d / y_atm_ivp_250d and
+    # x_atm_vrp_21d / y_atm_vrp_21d) are intentionally NOT declared here. They are
+    # present only on the standard 1y/1d scan and must be ABSENT for every other
+    # scan. Declaring them with a default would make a pydantic response_model emit
+    # them as null on ineligible scans, violating that contract. The /results route
+    # returns the raw engine dict, so the keys are genuinely present-or-absent.
 
 
 class TaskResponse(BaseModel):

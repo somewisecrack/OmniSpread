@@ -1,11 +1,14 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api/backend";
 
+export type PriceBasis = "raw" | "log";
+
 export interface ScanRequest {
     tickers: string[];
     period: string;
     interval?: string;
     start_date?: string;
     end_date?: string;
+    price_basis?: PriceBasis;
 }
 
 export interface PairResult {
@@ -16,6 +19,7 @@ export interface PairResult {
     direction: string;
     combo: string;
     method: string;
+    price_basis: PriceBasis;
     price_corr: number;
     z_score: number;
     half_life: number;
@@ -32,10 +36,13 @@ export interface PairResult {
     profitable_since_extreme: string;
     pnl_since_extreme: number;
     historical_z_scores: { time: number; value: number }[];
-    // Display-only ATM IV percentile; present only on the standard 1y/1d scan.
-    // A string like "72.0%" or "Unavailable"; undefined for every other scan.
+    // Display-only volatility metrics; present only on the standard 1y/1d scan.
+    // IVP is a string like "72.0%"; VRP is signed vol points like "+4.0"; either
+    // may be "Unavailable". All undefined for every other scan.
     x_atm_ivp_250d?: string;
     y_atm_ivp_250d?: string;
+    x_atm_vrp_21d?: string;
+    y_atm_vrp_21d?: string;
 }
 
 export interface TaskResult {

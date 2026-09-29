@@ -33,6 +33,7 @@ COLUMNS = [
     ("pair", "PAIR", 22, "<"),
     ("combo", "COMBO", 10, "<"),
     ("method", "METHOD", 8, "<"),
+    ("price_basis", "BASIS", 5, "<"),
     ("z_score", "Z", 7, ">"),
     ("half_life", "HL", 5, ">"),
     ("hurst", "HURST", 6, ">"),
@@ -64,6 +65,8 @@ def _columns_for(results):
         columns += [
             ("x_atm_ivp_250d", "X IVP250", 9, ">"),
             ("y_atm_ivp_250d", "Y IVP250", 9, ">"),
+            ("x_atm_vrp_21d", "X VRP", 7, ">"),
+            ("y_atm_vrp_21d", "Y VRP", 7, ">"),
         ]
     return columns
 
@@ -103,7 +106,7 @@ def cmd_scan(args):
         return 2
 
     print(f"Scanning {len(tickers)} tickers from {source} "
-          f"(period={args.period}, interval={args.interval})...", file=sys.stderr)
+          f"(period={args.period}, interval={args.interval}, basis={args.price_basis})...", file=sys.stderr)
 
     engine = OmniSpreadEngine(
         tickers=tickers,
@@ -112,6 +115,7 @@ def cmd_scan(args):
         start_date=args.start,
         end_date=args.end,
         top_n=args.top_n,
+        price_basis=args.price_basis,
     )
 
     try:
@@ -238,6 +242,8 @@ def build_parser():
     p_scan.add_argument("--start", help="Start date YYYY-MM-DD (overrides --period when used with --end)")
     p_scan.add_argument("--end", help="End date YYYY-MM-DD")
     p_scan.add_argument("--top-n", type=int, default=50, help="Max cointegrated pairs to run MC on (default: 50)")
+    p_scan.add_argument("--price-basis", default="raw", choices=["raw", "log"],
+                        help="Run cointegration and spread metrics on raw prices or log prices (default: raw)")
     p_scan.add_argument("--min-prob", type=float, help="Only show pairs with P(profit) >= this percent")
     p_scan.add_argument("--limit", type=int, help="Show only the first N pairs")
     p_scan.add_argument("--json", nargs="?", const="-", metavar="FILE",

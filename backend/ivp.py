@@ -58,6 +58,15 @@ IVP_LOOKBACK_TRADING_DAYS = 250
 # Below this many valid prior observations the percentile is not trustworthy,
 # so the ticker reports Unavailable rather than a percentile off a thin sample.
 MIN_VALID_OBSERVATIONS = 60
+
+# --- VRP (variance risk premium) -------------------------------------------
+# VRP = current ATM IV - realised volatility, in annualised volatility points.
+# Positive means options are priced above what the stock has actually delivered
+# (vol is rich -> selling premium, e.g. credit spreads, is favoured); negative
+# means options are cheap (buying them, e.g. futures + long option, is favoured).
+# Realised vol is measured over one monthly option cycle to match the tenor of
+# the contracts a pair trade actually uses. VRP is display-only, like IVP.
+VRP_REALIZED_WINDOW = 21
 # Calendar days of history to request. A year of trading days is ~250; the extra
 # margin absorbs the observations discarded for illiquid or near-expiry days.
 FETCH_CALENDAR_DAYS = 400
@@ -292,6 +301,19 @@ def _load_or_build_series(ticker: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 #   Public API
 # ---------------------------------------------------------------------------
+def _percentile(series: list[dict]) -> float | None:
+    """IV percentile of the latest observation against its priors, or None."""
+    if len(series) < MIN_VALID_OBSERVATIONS + 1:
+        return None  # need the priors plus the current observation
+    window = series[-(IVP_LOOKBACK_TRADING_DAYS + 1):]
+    current = window[-1]["atm_iv"]
+    priors = [obs["atm_iv"] for obs in window[:-1]]
+    if len(priors) < MIN_VALID_OBSERVATIONS:
+        return None
+    below = sum(1 for iv in priors if iv < current)
+    return round(100.0 * below / len(priors), 1)
+
+
 def compute_atm_ivp(ticker: str) -> float | None:
     """ATM IV percentile for one ticker, or None (Unavailable).
 
@@ -303,28 +325,46 @@ def compute_atm_ivp(ticker: str) -> float | None:
     except Exception as exc:  # noqa: BLE001 - display-only; must never break a scan
         logger.warning("IVP unavailable for %s: %s", ticker, str(exc)[:80])
         return None
+    return _percentile(series)
 
-    if len(series) < MIN_VALID_OBSERVATIONS + 1:
-        return None  # need the priors plus the current observation
 
-    window = series[-(IVP_LOOKBACK_TRADING_DAYS + 1):]
-    current = window[-1]["atm_iv"]
-    priors = [obs["atm_iv"] for obs in window[:-1]]
-    if len(priors) < MIN_VALID_OBSERVATIONS:
-        return None
+def compute_metrics(ticker: str) -> dict[str, float | None]:
+    """Both display metrics for one ticker: IV percentile and current ATM IV.
 
-    below = sum(1 for iv in priors if iv < current)
-    return round(100.0 * below / len(priors), 1)
+    ``ivp`` is the percentile (None if the sample is too thin); ``current_iv`` is
+    the latest valid ATM IV, used by the caller to form VRP against realised vol.
+    Never raises.
+    """
+    try:
+        series = _load_or_build_series(ticker)
+    except Exception as exc:  # noqa: BLE001 - display-only; must never break a scan
+        logger.warning("IVP/VRP unavailable for %s: %s", ticker, str(exc)[:80])
+        return {"ivp": None, "current_iv": None}
+    current_iv = series[-1]["atm_iv"] if series else None
+    return {"ivp": _percentile(series), "current_iv": current_iv}
 
 
 def compute_ivp_map(tickers) -> dict[str, float | None]:
     """{ticker: percentile-or-None} for a set of tickers, each independent."""
-    result: dict[str, float | None] = {}
-    for ticker in dict.fromkeys(tickers):  # de-dup, preserve order
-        result[ticker] = compute_atm_ivp(ticker)
-    return result
+    return {ticker: compute_atm_ivp(ticker) for ticker in dict.fromkeys(tickers)}
+
+
+def compute_metrics_map(tickers) -> dict[str, dict[str, float | None]]:
+    """{ticker: {"ivp":..., "current_iv":...}} — series built once per ticker."""
+    return {ticker: compute_metrics(ticker) for ticker in dict.fromkeys(tickers)}
 
 
 def format_ivp(value: float | None) -> str:
     """Render a computed IVP for display, or the Unavailable sentinel."""
     return UNAVAILABLE if value is None else f"{value:.1f}%"
+
+
+def format_vrp(iv: float | None, realized_vol: float | None) -> str:
+    """VRP in signed volatility points, or Unavailable if either input is missing.
+
+    e.g. current IV 24.0% and realised 20.0% -> "+4.0". Both inputs are annualised
+    volatility fractions.
+    """
+    if iv is None or realized_vol is None:
+        return UNAVAILABLE
+    return f"{(iv - realized_vol) * 100.0:+.1f}"

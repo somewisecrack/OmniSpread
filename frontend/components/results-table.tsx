@@ -130,6 +130,7 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
     const columns: { key: SortKey; label: string; width?: string }[] = [
         { key: "combo", label: "Trade" },
         { key: "method", label: "Method", width: "80px" },
+        { key: "price_basis", label: "Basis", width: "60px" },
         { key: "z_score", label: "Z-Score", width: "80px" },
         { key: "prob_profit", label: "P(Profit)", width: "140px" },
         { key: "half_life", label: "HL", width: "50px" },
@@ -179,8 +180,10 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
             overflow: "hidden",
             background: "var(--color-bg-secondary)",
         }}>
-            <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12.5px" }}>
+            <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+                {/* minWidth grows when the IVP/VRP columns are present so the wrapper
+                    scrolls horizontally instead of crushing columns. */}
+                <table style={{ width: "100%", minWidth: hasIvp ? "1180px" : "880px", borderCollapse: "collapse", fontSize: "12.5px" }}>
                     <thead>
                         <tr style={{ borderBottom: "1px solid var(--color-border)", background: "rgba(26, 26, 46, 0.6)" }}>
                             <th style={{ padding: "12px 12px", textAlign: "center", fontSize: "11px", fontWeight: 600, color: "var(--color-text-muted)", width: "30px" }}>#</th>
@@ -209,8 +212,13 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
                                     )}
                                 </th>
                             ))}
-                            {hasIvp && (["X ATM IVP (250d)", "Y ATM IVP (250d)"] as const).map((label) => (
-                                <th key={label} title="Display-only ATM IV percentile over the last 250 trading days" style={{ padding: "12px 10px", textAlign: "center", fontSize: "10.5px", fontWeight: 600, color: "var(--color-text-secondary)", width: "72px", textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                            {hasIvp && ([
+                                ["X ATM IVP (250d)", "Display-only ATM IV percentile over the last 250 trading days"],
+                                ["Y ATM IVP (250d)", "Display-only ATM IV percentile over the last 250 trading days"],
+                                ["X VRP", "Display-only variance risk premium: ATM IV minus 21d realised vol, in vol points. Positive = vol rich (favours selling premium)."],
+                                ["Y VRP", "Display-only variance risk premium: ATM IV minus 21d realised vol, in vol points. Positive = vol rich (favours selling premium)."],
+                            ] as const).map(([label, tip]) => (
+                                <th key={label} title={tip} style={{ padding: "12px 10px", textAlign: "center", fontSize: "10.5px", fontWeight: 600, color: "var(--color-text-secondary)", width: "68px", textTransform: "uppercase", letterSpacing: "0.04em", whiteSpace: "nowrap" }}>
                                     {label}
                                 </th>
                             ))}
@@ -258,6 +266,17 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
                                             "var(--color-accent-blue)",
                                 }}>
                                     {res.method}
+                                </td>
+                                {/* Price Basis */}
+                                <td style={{
+                                    padding: "12px 10px",
+                                    textAlign: "center",
+                                    fontSize: "10.5px",
+                                    fontWeight: 700,
+                                    color: res.price_basis === "log" ? "var(--color-accent-yellow)" : "var(--color-text-muted)",
+                                    textTransform: "uppercase",
+                                }}>
+                                    {res.price_basis}
                                 </td>
                                 {/* Z-Score */}
                                 <td style={{
@@ -366,18 +385,33 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
                                 }}>
                                     {res.same_sector}
                                 </td>
-                                {/* ATM IVP (250d) — display only */}
-                                {hasIvp && [res.x_atm_ivp_250d, res.y_atm_ivp_250d].map((value, idx) => (
-                                    <td key={idx} style={{
-                                        padding: "12px 10px",
-                                        textAlign: "center",
-                                        fontFamily: "var(--font-mono)",
-                                        fontSize: "11.5px",
-                                        color: value === "Unavailable" ? "var(--color-text-muted)" : "var(--color-text-secondary)",
-                                    }}>
-                                        {value ?? "—"}
-                                    </td>
-                                ))}
+                                {/* ATM IVP (250d) and VRP — display only */}
+                                {hasIvp && [
+                                    { value: res.x_atm_ivp_250d, kind: "ivp" },
+                                    { value: res.y_atm_ivp_250d, kind: "ivp" },
+                                    { value: res.x_atm_vrp_21d, kind: "vrp" },
+                                    { value: res.y_atm_vrp_21d, kind: "vrp" },
+                                ].map(({ value, kind }, idx) => {
+                                    let color = "var(--color-text-secondary)";
+                                    if (value === "Unavailable" || value === undefined) {
+                                        color = "var(--color-text-muted)";
+                                    } else if (kind === "vrp") {
+                                        // Positive VRP = vol rich (sell premium); negative = cheap.
+                                        color = value.startsWith("-") ? "var(--color-accent-blue)" : "var(--color-accent-green)";
+                                    }
+                                    return (
+                                        <td key={idx} style={{
+                                            padding: "12px 10px",
+                                            textAlign: "center",
+                                            fontFamily: "var(--font-mono)",
+                                            fontSize: "11.5px",
+                                            whiteSpace: "nowrap",
+                                            color,
+                                        }}>
+                                            {value ?? "—"}
+                                        </td>
+                                    );
+                                })}
                                 <td style={{ padding: "12px 10px", textAlign: "center" }}>
                                     <div style={{ display: "grid", gap: "6px" }}>
                                         {isBacktestScenario ? (

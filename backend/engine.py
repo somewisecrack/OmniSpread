@@ -37,12 +37,15 @@ class OmniSpreadEngine:
     HURST_LIMIT = 0.45
 
     def __init__(self, tickers, start_date=None, end_date=None, period="3y", interval="1d",
-                 top_n=50):
+                 top_n=50, price_basis="raw"):
         self.tickers = tickers
         self.start_date = start_date
         self.end_date = end_date
         self.period = period
         self.interval = interval
+        if price_basis not in {"raw", "log"}:
+            raise ValueError("price_basis must be 'raw' or 'log'")
+        self.price_basis = price_basis
         self.top_n = top_n
         self.data = None
         self.industry_map = {}
@@ -235,10 +238,18 @@ class OmniSpreadEngine:
         if len(pair_returns) < 50:
             return None
 
-        price_corr = round(pair_prices.corr().iloc[0, 1], 2)
-        return_corr = round(pair_returns.corr().iloc[0, 1], 2)
         px = round(float(pair_prices[x_sym].iloc[-1]), 2)
         py = round(float(pair_prices[y_sym].iloc[-1]), 2)
+
+        if self.price_basis == "log":
+            if (pair_prices[[x_sym, y_sym]] <= 0).any().any():
+                return None
+            basis_prices = np.log(pair_prices[[x_sym, y_sym]])
+        else:
+            basis_prices = pair_prices[[x_sym, y_sym]]
+
+        price_corr = round(basis_prices.corr().iloc[0, 1], 2)
+        return_corr = round(pair_returns.corr().iloc[0, 1], 2)
 
         ix = self.industry_map.get(x_sym, "Unknown")
         iy = self.industry_map.get(y_sym, "Unknown")
@@ -251,10 +262,10 @@ class OmniSpreadEngine:
 
         # --- CADF with Kalman ---
         try:
-            ols = OLS(pair_prices[y_sym], add_constant(pair_prices[x_sym])).fit()
+            ols = OLS(basis_prices[y_sym], add_constant(basis_prices[x_sym])).fit()
             beta0 = float(ols.params.iloc[1])
-            beta_ts = self.kalman_beta_series(pair_prices[x_sym], pair_prices[y_sym], beta0)
-            spread = pair_prices[y_sym] - beta_ts * pair_prices[x_sym]
+            beta_ts = self.kalman_beta_series(basis_prices[x_sym], basis_prices[y_sym], beta0)
+            spread = basis_prices[y_sym] - beta_ts * basis_prices[x_sym]
             try:
                 pval = adfuller(spread.dropna(), autolag="AIC")[1]
             except Exception:
@@ -266,7 +277,7 @@ class OmniSpreadEngine:
 
         # --- Johansen ---
         try:
-            jr = coint_johansen(pair_prices, det_order=0, k_ar_diff=1)
+            jr = coint_johansen(basis_prices, det_order=0, k_ar_diff=1)
             trace, ct = jr.lr1, jr.cvt[:, 1]
             maxe, cm = jr.lr2, jr.cvm[:, 1]
             if any(trace[i] > ct[i] and maxe[i] > cm[i] for i in range(2)):
@@ -287,9 +298,9 @@ class OmniSpreadEngine:
         else:
             try:
                 beta_ts = self.kalman_beta_series(
-                    pair_prices[x_sym], pair_prices[y_sym], float(beta0_j)
+                    basis_prices[x_sym], basis_prices[y_sym], float(beta0_j)
                 )
-                spread = pair_prices[y_sym] - beta_ts * pair_prices[x_sym]
+                spread = basis_prices[y_sym] - beta_ts * basis_prices[x_sym]
                 pass_method = "Johansen"
             except Exception:
                 return None
@@ -327,6 +338,7 @@ class OmniSpreadEngine:
             "qty": qty,
             "direction": direction,
             "method": pass_method,
+            "price_basis": self.price_basis,
             "cadf_pass": cadf_pass, "johansen_pass": johansen_pass,
             "price_corr": price_corr, "return_corr": return_corr,
             "px": px, "py": py,
@@ -518,6 +530,7 @@ class OmniSpreadEngine:
             "direction": direction,
             "combo": combo_str,
             "method": method,
+            "price_basis": item.get("price_basis", self.price_basis),
             "price_corr": self._safe_float(price_corr),
             "z_score": self._safe_float(z_display),
             "half_life": hl,
@@ -561,7 +574,7 @@ class OmniSpreadEngine:
                 result = self.screen_pair(x, y)
                 if result:
                     screened.append(result)
-                    logger.info(f"  ✓ Cointegrated: {x}/{y} ({result['method']})")
+                    logger.info(f"  ✓ Cointegrated: {x}/{y} ({result['method']}, {result['price_basis']})")
             except Exception as e:
                 logger.warning(f"  ✗ {x}/{y} screening failed: {e}")
 
@@ -581,17 +594,33 @@ class OmniSpreadEngine:
                 logger.warning(f"  ✗ MC failed for {item['x']}/{item['y']}: {e}")
 
         results = sorted(results, key=lambda x: x["prob_profit"], reverse=True)
-        self._attach_atm_ivp(results)
+        self._attach_vol_metrics(results)
         logger.info(f"Scan complete. {len(results)} pairs with full metrics.")
         return results
 
-    def _attach_atm_ivp(self, results):
-        """Attach display-only X/Y ATM IVP (250d) to each result row.
+    def _realized_vol(self, ticker, window):
+        """Annualised realised volatility from the daily closes already fetched.
+
+        Uses self.data (the same prices the scan ran on), so no extra download.
+        Returns None when there is not a full window of data.
+        """
+        if self.data is None or ticker not in self.data.columns:
+            return None
+        closes = self.data[ticker].dropna()
+        if len(closes) < window + 1:
+            return None
+        log_returns = np.log(closes / closes.shift(1)).dropna().tail(window)
+        if len(log_returns) < window:
+            return None
+        return float(log_returns.std() * np.sqrt(252))
+
+    def _attach_vol_metrics(self, results):
+        """Attach display-only X/Y ATM IVP (250d) and VRP to each result row.
 
         Runs only for the standard live daily scan - exactly period "1y",
         interval "1d", and no explicit custom date range. For every other scan
-        the IVP keys are absent entirely (no zero, no placeholder). IVP is
-        informational: it is computed after ranking and never influences pair
+        the columns are absent entirely (no zero, no placeholder). Both metrics
+        are informational: computed after ranking, they never influence pair
         selection, ordering, probabilities, half-life, or anything downstream.
         """
         eligible = (
@@ -603,18 +632,22 @@ class OmniSpreadEngine:
             return
 
         try:
-            from ivp import compute_ivp_map, format_ivp
-        except Exception:  # noqa: BLE001 - IVP must never break a scan
-            logger.warning("IVP module unavailable; skipping IVP.")
+            from ivp import compute_metrics_map, format_ivp, format_vrp, VRP_REALIZED_WINDOW
+        except Exception:  # noqa: BLE001 - must never break a scan
+            logger.warning("IVP/VRP module unavailable; skipping.")
             return
 
         tickers = {row["x"] for row in results} | {row["y"] for row in results}
         try:
-            ivp_map = compute_ivp_map(tickers)
+            metrics = compute_metrics_map(tickers)
         except Exception as exc:  # noqa: BLE001
-            logger.warning(f"IVP computation failed; leaving it off: {exc}")
+            logger.warning(f"Vol-metrics computation failed; leaving it off: {exc}")
             return
+        realized = {t: self._realized_vol(t, VRP_REALIZED_WINDOW) for t in tickers}
 
         for row in results:
-            row["x_atm_ivp_250d"] = format_ivp(ivp_map.get(row["x"]))
-            row["y_atm_ivp_250d"] = format_ivp(ivp_map.get(row["y"]))
+            for leg in ("x", "y"):
+                ticker = row[leg]
+                m = metrics.get(ticker, {})
+                row[f"{leg}_atm_ivp_250d"] = format_ivp(m.get("ivp"))
+                row[f"{leg}_atm_vrp_21d"] = format_vrp(m.get("current_iv"), realized.get(ticker))

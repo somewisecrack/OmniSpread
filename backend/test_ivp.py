@@ -59,13 +59,22 @@ def _results():
     return [{"pair": "INFY/TCS", "x": "INFY.NS", "y": "TCS.NS", "prob_profit": 90.0}]
 
 
-def test_ivp_attached_only_for_1y_1d(monkeypatch):
-    monkeypatch.setattr(ivp, "compute_ivp_map",
-                        lambda tickers: {"INFY.NS": 72.0, "TCS.NS": None})
+def _metrics(mapping):
+    """Adapt a {ticker: (ivp, current_iv)} dict to compute_metrics_map's shape."""
+    return lambda tickers: {t: {"ivp": iv, "current_iv": cur} for t, (iv, cur) in mapping.items()}
+
+
+def test_ivp_and_vrp_attached_only_for_1y_1d(monkeypatch):
+    monkeypatch.setattr(ivp, "compute_metrics_map",
+                        _metrics({"INFY.NS": (72.0, 0.24), "TCS.NS": (None, None)}))
+    engine = _engine("1y", "1d")
+    monkeypatch.setattr(engine, "_realized_vol", lambda t, w: 0.20 if t == "INFY.NS" else None)
     results = _results()
-    _engine("1y", "1d")._attach_atm_ivp(results)
+    engine._attach_vol_metrics(results)
     assert results[0]["x_atm_ivp_250d"] == "72.0%"
+    assert results[0]["x_atm_vrp_21d"] == "+4.0"          # 24% IV - 20% RV
     assert results[0]["y_atm_ivp_250d"] == "Unavailable"
+    assert results[0]["y_atm_vrp_21d"] == "Unavailable"   # no current IV
 
 
 @pytest.mark.parametrize("period,interval,start,end", [
@@ -75,23 +84,24 @@ def test_ivp_attached_only_for_1y_1d(monkeypatch):
     ("6mo", "1d", None, None),
     ("1y", "1d", "2024-01-01", "2025-01-01"),   # 1y/1d strings but a custom range
 ])
-def test_ivp_absent_and_never_invoked_for_non_eligible(monkeypatch, period, interval, start, end):
+def test_metrics_absent_and_never_invoked_for_non_eligible(monkeypatch, period, interval, start, end):
     called = []
-    monkeypatch.setattr(ivp, "compute_ivp_map", lambda tickers: called.append(tickers) or {})
+    monkeypatch.setattr(ivp, "compute_metrics_map", lambda tickers: called.append(tickers) or {})
     results = _results()
-    _engine(period, interval, start, end)._attach_atm_ivp(results)
+    _engine(period, interval, start, end)._attach_vol_metrics(results)
     assert called == []                                   # never invoked
-    assert "x_atm_ivp_250d" not in results[0]             # column absent entirely
-    assert "y_atm_ivp_250d" not in results[0]
+    for key in ("x_atm_ivp_250d", "y_atm_ivp_250d", "x_atm_vrp_21d", "y_atm_vrp_21d"):
+        assert key not in results[0]                      # every column absent
 
 
-def test_ivp_failure_never_breaks_the_scan(monkeypatch):
+def test_metrics_failure_never_breaks_the_scan(monkeypatch):
     def boom(tickers):
         raise RuntimeError("NSE down")
-    monkeypatch.setattr(ivp, "compute_ivp_map", boom)
+    monkeypatch.setattr(ivp, "compute_metrics_map", boom)
     results = _results()
-    _engine("1y", "1d")._attach_atm_ivp(results)          # must not raise
+    _engine("1y", "1d")._attach_vol_metrics(results)      # must not raise
     assert "x_atm_ivp_250d" not in results[0]
+    assert "x_atm_vrp_21d" not in results[0]
 
 
 # ===========================================================================
@@ -223,21 +233,55 @@ def test_only_nse_client_is_the_data_path(monkeypatch, tmp_path):
 # ===========================================================================
 #   8 — IVP does not alter existing results / ranking / metrics
 # ===========================================================================
-def test_ivp_only_adds_keys_and_preserves_order_and_values(monkeypatch):
-    monkeypatch.setattr(ivp, "compute_ivp_map",
-                        lambda tickers: {"A.NS": 10.0, "B.NS": 90.0})
+def test_vol_metrics_only_add_keys_and_preserve_order_and_values(monkeypatch):
+    monkeypatch.setattr(ivp, "compute_metrics_map",
+                        _metrics({"A.NS": (10.0, 0.3), "B.NS": (90.0, 0.2), "C.NS": (50.0, 0.25)}))
     results = [
         {"pair": "A/B", "x": "A.NS", "y": "B.NS", "prob_profit": 95.0, "half_life": 8, "z_score": 2.1},
         {"pair": "A/C", "x": "A.NS", "y": "C.NS", "prob_profit": 60.0, "half_life": 12, "z_score": -2.4},
     ]
     before = [dict(r) for r in results]
-    _engine("1y", "1d")._attach_atm_ivp(results)
+    engine = _engine("1y", "1d")
+    monkeypatch.setattr(engine, "_realized_vol", lambda t, w: 0.22)
+    engine._attach_vol_metrics(results)
 
     assert [r["pair"] for r in results] == [r["pair"] for r in before]      # order preserved
     for r, b in zip(results, before):
         for key, value in b.items():
             assert r[key] == value                                         # every prior field intact
-        assert set(r) - set(b) == {"x_atm_ivp_250d", "y_atm_ivp_250d"}     # only IVP keys added
+        assert set(r) - set(b) == {
+            "x_atm_ivp_250d", "y_atm_ivp_250d", "x_atm_vrp_21d", "y_atm_vrp_21d",
+        }
+
+
+def test_vrp_formatting_signs_and_unavailable():
+    assert ivp.format_vrp(0.24, 0.20) == "+4.0"     # rich vol
+    assert ivp.format_vrp(0.18, 0.22) == "-4.0"     # cheap vol
+    assert ivp.format_vrp(0.20, 0.20) == "+0.0"
+    assert ivp.format_vrp(None, 0.20) == "Unavailable"
+    assert ivp.format_vrp(0.24, None) == "Unavailable"
+
+
+def test_realized_vol_uses_scan_prices_without_refetch():
+    import numpy as np
+    eng = _engine("1y", "1d")
+    # 40 flat-drift closes with known noise; realised vol must be finite and positive.
+    idx = pd.date_range("2026-01-01", periods=40, freq="D")
+    closes = pd.Series(1000 * np.exp(np.cumsum(np.random.default_rng(0).normal(0, 0.01, 40))), index=idx)
+    eng.data = pd.DataFrame({"INFY.NS": closes})
+    rv = eng._realized_vol("INFY.NS", 21)
+    assert rv is not None and 0 < rv < 2
+    assert eng._realized_vol("MISSING.NS", 21) is None       # ticker not in data
+    assert eng._realized_vol("INFY.NS", 500) is None         # window longer than data
+
+
+def test_current_iv_available_even_when_ivp_sample_thin(monkeypatch):
+    """VRP should work off the latest IV even if there are too few priors for IVP."""
+    monkeypatch.setattr(ivp, "_load_or_build_series",
+                        lambda t: [{"atm_iv": 0.2}] * 5 + [{"atm_iv": 0.3}])
+    m = ivp.compute_metrics("X")
+    assert m["ivp"] is None            # thin sample -> no percentile
+    assert m["current_iv"] == 0.3      # but current IV is still available for VRP
 
 
 # ===========================================================================

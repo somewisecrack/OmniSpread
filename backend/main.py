@@ -41,7 +41,7 @@ async def start_scan(request: ScanRequest, background_tasks: BackgroundTasks):
     task_id = str(uuid.uuid4())
     tasks[task_id] = {"task_id": task_id, "status": "processing", "results": []}
     background_tasks.add_task(run_engine, task_id, request)
-    logger.info(f"Scan started: {task_id} | tickers={request.tickers} period={request.period}")
+    logger.info(f"Scan started: {task_id} | tickers={request.tickers} period={request.period} basis={request.price_basis}")
     return {"task_id": task_id}
 
 
@@ -184,6 +184,7 @@ def run_engine(task_id: str, request: ScanRequest):
             interval=request.interval,
             start_date=request.start_date,
             end_date=request.end_date,
+            price_basis=request.price_basis,
         )
         results = engine.run_scan()
         tasks[task_id]["results"] = results
