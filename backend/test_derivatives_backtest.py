@@ -354,3 +354,29 @@ def test_current_credit_structure_falls_back_to_futures_close_when_spot_is_missi
     )
     assert [leg["spot"] for leg in result["legs"] if leg["asset"] == "x"] == [104.0, 104.0]
     assert [leg["spot"] for leg in result["legs"] if leg["asset"] == "y"] == [204.0, 204.0]
+
+
+def test_blank_option_lot_filled_from_futures():
+    from derivatives_backtest import _fill_option_lots
+
+    d1, d2 = pd.Timestamp("2024-09-30"), pd.Timestamp("2024-10-01")
+    exp = pd.Timestamp("2024-10-31")
+    futures = pd.DataFrame({"date": [d1, d2], "expiry": [exp, exp], "MARKET_LOT": [350.0, 350.0]})
+    options = pd.DataFrame({
+        "date": [d1, d1, d2],
+        "expiry": [exp, exp, exp],
+        "STRIKE_PRICE": [3000.0, 3100.0, 3000.0],
+        "MARKET_LOT": [350.0, float("nan"), float("nan")],
+    })
+    filled = _fill_option_lots(options, futures)
+    assert filled["MARKET_LOT"].tolist() == [350.0, 350.0, 350.0]
+    assert options["MARKET_LOT"].isna().sum() == 2  # input not mutated
+
+
+def test_missing_lot_gives_clear_error():
+    import pytest
+    from derivatives_backtest import _lot
+
+    assert _lot(350.0) == 350
+    with pytest.raises(ValueError, match="missing the market lot size"):
+        _lot(float("nan"), "M&M")

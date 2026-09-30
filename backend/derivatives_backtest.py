@@ -116,6 +116,34 @@ def _clean(df: pd.DataFrame) -> pd.DataFrame:
     return result.sort_values("date")
 
 
+def _fill_option_lots(option_df: pd.DataFrame, future_df: pd.DataFrame) -> pd.DataFrame:
+    """Fill blank option MARKET_LOT values from the futures contract.
+
+    NSE occasionally leaves MARKET_LOT blank on a few option rows. Options and
+    futures on the same underlying and expiry share one lot size, so use the
+    futures lot for the same date and expiry, else the latest one for that expiry.
+    """
+    if option_df.empty or "MARKET_LOT" not in option_df or not option_df["MARKET_LOT"].isna().any():
+        return option_df
+    known = future_df.dropna(subset=["MARKET_LOT"]).sort_values("date")
+    by_day = known.groupby(["date", "expiry"])["MARKET_LOT"].last()
+    by_expiry = known.groupby("expiry")["MARKET_LOT"].last()
+    result = option_df.copy()
+    missing = result["MARKET_LOT"].isna()
+    keys = pd.MultiIndex.from_frame(result.loc[missing, ["date", "expiry"]])
+    fill = pd.Series(by_day.reindex(keys).to_numpy(), index=result.index[missing])
+    fill = fill.fillna(result.loc[missing, "expiry"].map(by_expiry))
+    result.loc[missing, "MARKET_LOT"] = fill
+    return result
+
+
+def _lot(value, symbol_hint: str = "") -> int:
+    lot = pd.to_numeric(value, errors="coerce")
+    if pd.isna(lot) or lot <= 0:
+        raise ValueError(f"NSE data is missing the market lot size{' for ' + symbol_hint if symbol_hint else ''}.")
+    return int(lot)
+
+
 def _nearest_expiry(df: pd.DataFrame, required_expiry: pd.Timestamp) -> pd.Timestamp:
     expiries = sorted(df.loc[df["expiry"] >= required_expiry, "expiry"].dropna().unique())
     if not expiries:
@@ -199,7 +227,7 @@ def _choose_option(
         expiry=expiry,
         strike=strike,
         option_type=option_type,
-        lot_size=int(row["MARKET_LOT"]),
+        lot_size=_lot(row["MARKET_LOT"]),
     )
 
 
@@ -276,7 +304,7 @@ def _choose_option_by_move(
         expiry=expiry,
         strike=strike,
         option_type=option_type,
-        lot_size=int(row["MARKET_LOT"]),
+        lot_size=_lot(row["MARKET_LOT"]),
     )
 
 
@@ -304,7 +332,7 @@ def _step_strike(
         expiry=expiry,
         strike=strike,
         option_type=option_type,
-        lot_size=int(row["MARKET_LOT"]),
+        lot_size=_lot(row["MARKET_LOT"]),
     )
 
 
@@ -378,7 +406,7 @@ def _optimise_hedge(
         row = entry[(entry["STRIKE_PRICE"] == strike) & (entry["OPTION_TYPE"] == option_type)].iloc[0]
         hedge = Contract(
             symbol=str(row["SYMBOL"]), expiry=expiry, strike=strike,
-            option_type=option_type, lot_size=int(row["MARKET_LOT"]),
+            option_type=option_type, lot_size=_lot(row["MARKET_LOT"]),
         )
         legs = [
             {"asset": "x", "symbol": sold.symbol, "instrument": option_type, "side": "SELL",
@@ -516,6 +544,7 @@ def _fetch_credit_snapshot(
         symbol=symbol, instrument=option_type, option_type=None,
         from_date=from_date, to_date=to_date,
     ))
+    option_df = _fill_option_lots(option_df, future_df)
     option_rows = _latest_rows(option_df, expiry)
     if option_rows.empty:
         raise ValueError(f"No current option chain was available for {symbol} {expiry.strftime('%d-%b-%Y')}.")
@@ -533,7 +562,7 @@ def _fetch_credit_snapshot(
         "symbol": symbol,
         "expiry": expiry,
         "as_of": pd.Timestamp(future_rows["date"].max()),
-        "future_lot": int(future_rows.iloc[0]["MARKET_LOT"]),
+        "future_lot": _lot(future_rows.iloc[0]["MARKET_LOT"], symbol),
         "spot": float(spot_values.iloc[0]),
         "options": option_df,
         "option_snapshot": option_rows,
@@ -627,7 +656,7 @@ def _fetch_symbol(
     future_entry = _entry_rows(future_df, expiry)
     if future_entry.empty:
         raise ValueError(f"No entry-date futures contract was available for {symbol}.")
-    future_lot = int(future_entry.iloc[0]["MARKET_LOT"])
+    future_lot = _lot(future_entry.iloc[0]["MARKET_LOT"], symbol)
     spot = float(future_entry.iloc[0].get("UNDERLYING_VALUE", 0) or 0)
 
     result = {
@@ -647,9 +676,18 @@ def _fetch_symbol(
     ))
     if option_df.empty:
         raise ValueError(f"No options data was returned for {symbol}.")
-    if not spot:
+    option_df = _fill_option_lots(option_df, future_df)
+    if not spot or math.isnan(spot):
+        # NSElib occasionally leaves UNDERLYING_VALUE blank (NaN, which `or 0`
+        # does not catch). Fall back to the option chain, then to the futures
+        # close - the same proxy _fetch_credit_snapshot uses.
         option_entry = _entry_rows(option_df, expiry)
-        spot = float(option_entry["UNDERLYING_VALUE"].dropna().iloc[0])
+        spot_values = option_entry["UNDERLYING_VALUE"].dropna()
+        if spot_values.empty:
+            spot_values = future_entry["CLOSING_PRICE"].dropna()
+        if spot_values.empty:
+            raise ValueError(f"No underlying or futures reference price was available for {symbol}.")
+        spot = float(spot_values.iloc[0])
         result["spot"] = spot
     result["options"] = option_df
     return result
