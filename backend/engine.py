@@ -4,7 +4,7 @@ import pandas as pd
 import yfinance as yf
 import scipy.stats as st
 from itertools import combinations
-from statsmodels.tsa.stattools import adfuller
+from statsmodels.tsa.stattools import adfuller, coint
 from statsmodels.regression.linear_model import OLS
 from statsmodels.tools.tools import add_constant
 from statsmodels.tsa.vector_ar.vecm import coint_johansen
@@ -36,8 +36,18 @@ class OmniSpreadEngine:
     ADF_P_VALUE = 0.1
     HURST_LIMIT = 0.45
 
+    # --- v2 screening ---
+    CADF_P_VALUE = 0.05
+    MIN_QTY = 1e-6
+
     def __init__(self, tickers, start_date=None, end_date=None, period="3y", interval="1d",
-                 top_n=50, price_basis="raw"):
+                 top_n=50, price_basis="raw", engine_version="v1"):
+        # engine_version "v1" is the legacy scan (Kalman CADF, Hurst, Monte Carlo
+        # P(profit), first-top_n cut-off) and stays the default because other
+        # programs import this engine directly. The OmniSpread API/CLI request "v2".
+        if engine_version not in {"v1", "v2"}:
+            raise ValueError("engine_version must be 'v1' or 'v2'")
+        self.engine_version = engine_version
         self.tickers = tickers
         self.start_date = start_date
         self.end_date = end_date
@@ -222,6 +232,11 @@ class OmniSpreadEngine:
     # ========================
 
     def screen_pair(self, x_sym, y_sym):
+        if self.engine_version == "v2":
+            return self._screen_pair_v2(x_sym, y_sym)
+        return self._screen_pair_v1(x_sym, y_sym)
+
+    def _screen_pair_v1(self, x_sym, y_sym):
         """
         Run CADF + Johansen cointegration tests on a pair.
         Returns dict with pair metadata if cointegrated and passes filters, else None.
@@ -559,6 +574,261 @@ class OmniSpreadEngine:
         }
 
     # ========================
+    #   V2: CADF + JOHANSEN, STATIC HEDGE
+    # ========================
+
+    @staticmethod
+    def johansen_rank(trace, maxeig, cvt, cvm):
+        """Estimated cointegration rank (0, 1 or 2) for a 2-series Johansen test at 95%.
+
+        Rank 0 is rejected only when both the trace and max-eigenvalue tests
+        reject it. For two series the r<=1 trace and max-eigenvalue statistics
+        are identical, so the trace test decides rank 1 vs 2.
+        """
+        r0_rejected = trace[0] > cvt[0, 1] and maxeig[0] > cvm[0, 1]
+        if not r0_rejected:
+            return 0
+        r1_rejected = trace[1] > cvt[1, 1]
+        return 2 if r1_rejected else 1
+
+    @staticmethod
+    def _fmt_px(v):
+        return f"{v:.2f}" if abs(v) >= 1 else f"{v:.4g}"
+
+    def _screen_pair_v2(self, x_sym, y_sym):
+        """
+        Static-hedge cointegration screen over the selected window.
+
+        Passes only if CADF (Engle-Granger critical values, worse p-value of
+        both orderings) is below CADF_P_VALUE AND Johansen rejects rank 0.
+        Rank 2 is accepted: only the spread must be stationary, and on price
+        data Johansen's rank-2 verdict is mostly a false alarm (its r<=1
+        critical value assumes drifting prices).
+        The hedge comes from the Johansen cointegrating vector and must be
+        positive. `qty` is the share ratio (X shares per 1 Y share) on both
+        price bases, so every backtest can use it directly.
+        """
+        try:
+            pair_prices = self.data[[x_sym, y_sym]].dropna()
+        except Exception:
+            return None
+
+        if len(pair_prices) < 50:
+            return None
+
+        pair_returns = pair_prices.pct_change().dropna()
+        if len(pair_returns) < 50:
+            return None
+
+        px = float(pair_prices[x_sym].iloc[-1])
+        py = float(pair_prices[y_sym].iloc[-1])
+
+        if self.price_basis == "log":
+            if (pair_prices[[x_sym, y_sym]] <= 0).any().any():
+                return None
+            basis_prices = np.log(pair_prices[[x_sym, y_sym]])
+        else:
+            basis_prices = pair_prices[[x_sym, y_sym]]
+
+        price_corr = round(basis_prices.corr().iloc[0, 1], 2)
+        return_corr = round(pair_returns.corr().iloc[0, 1], 2)
+
+        ix = self.industry_map.get(x_sym, "Unknown")
+        iy = self.industry_map.get(y_sym, "Unknown")
+
+        # --- Johansen: must reject rank 0 (rank 1 or 2) ---
+        try:
+            jr = coint_johansen(basis_prices, det_order=0, k_ar_diff=1)
+        except Exception:
+            return None
+        rank = self.johansen_rank(np.real(jr.lr1), np.real(jr.lr2), jr.cvt, jr.cvm)
+        if rank < 1:
+            return None
+
+        # --- CADF (Engle-Granger), both orderings ---
+        try:
+            p_yx = coint(basis_prices[y_sym], basis_prices[x_sym], trend="c", autolag="AIC")[1]
+            p_xy = coint(basis_prices[x_sym], basis_prices[y_sym], trend="c", autolag="AIC")[1]
+        except Exception:
+            return None
+        cadf_pvalue = float(max(p_yx, p_xy))
+        if not (cadf_pvalue < self.CADF_P_VALUE):
+            return None
+
+        # --- Static hedge from the Johansen vector ---
+        # statsmodels can return eigen-results with zero imaginary parts; use the real part.
+        eig, evec = np.real(jr.eig), np.real(jr.evec)
+        idx = int(np.argmax(eig))
+        v1, v2 = evec[:, idx]
+        if v2 == 0:
+            return None
+        beta = float(-v1 / v2)
+        if not math.isfinite(beta) or beta <= 0:
+            return None
+
+        spread = basis_prices[y_sym] - beta * basis_prices[x_sym]
+
+        # --- Half-life and z-score (same as v1) ---
+        lag = spread.shift(1).bfill()
+        ret = spread - lag
+        b = np.polyfit(lag, ret, 1)[0] if np.std(lag) > 0 else 0
+        hl = max(1, int(round(-np.log(2) / b))) if b != 0 else 1
+        mavg = spread.rolling(window=hl).mean()
+        mstd = spread.rolling(window=hl).std()
+
+        z = round(float((spread.iloc[-1] - mavg.iloc[-1]) / mstd.iloc[-1]), 1) \
+            if (mstd.iloc[-1] and not np.isnan(mstd.iloc[-1]) and mstd.iloc[-1] != 0) else np.nan
+
+        if not math.isfinite(z) or abs(z) <= self.Z_SCORE_LIMIT:
+            return None
+
+        # --- Share ratio: X shares per 1 Y share ---
+        qty = beta if self.price_basis == "raw" else beta * py / px
+        if not math.isfinite(qty) or qty < self.MIN_QTY:
+            return None
+
+        qty_txt = f"{qty:.4g}"
+        px_txt, py_txt = self._fmt_px(px), self._fmt_px(py)
+        if z > 0:
+            direction = "SHORT_SPREAD"
+            combo_str = f"Buy {qty_txt} of {x_sym} ({px_txt}, {ix})  &  Sell 1 of {y_sym} ({py_txt}, {iy})"
+        else:
+            direction = "LONG_SPREAD"
+            combo_str = f"Sell {qty_txt} of {x_sym} ({px_txt}, {ix})  &  Buy 1 of {y_sym} ({py_txt}, {iy})"
+
+        return {
+            "x": x_sym, "y": y_sym,
+            "qty": qty,
+            "beta": beta,
+            "direction": direction,
+            "method": "CADF+Johansen",
+            "price_basis": self.price_basis,
+            "cadf_pvalue": cadf_pvalue,
+            "johansen_rank": rank,
+            "price_corr": price_corr, "return_corr": return_corr,
+            "px": px, "py": py,
+            "combo_str": combo_str,
+            "spread": spread,
+            "half_life": hl,
+            "industry_x": ix, "industry_y": iy,
+        }
+
+    def _build_result_v2(self, item):
+        """Display metrics for a screened v2 pair. No Monte Carlo, no Hurst."""
+        x, y = item["x"], item["y"]
+        px, py = item["px"], item["py"]
+        qty = item["qty"]
+        beta = item["beta"]
+        spread = item["spread"]
+        hl = item["half_life"]
+
+        industry_x = item.get("industry_x", "Unknown")
+        industry_y = item.get("industry_y", "Unknown")
+        same_sector = "Yes" if (industry_x != "Unknown" and industry_x == industry_y) else "No"
+
+        mavg = spread.rolling(window=hl).mean()
+        mstd = spread.rolling(window=hl).std()
+        z_display = round(float(
+            (spread.iloc[-1] - mavg.iloc[-1]) / (mstd.iloc[-1] if mstd.iloc[-1] != 0 else 1e-12)
+        ), 1)
+
+        move_raw = float(-z_display * mstd.iloc[-1]) if (not np.isnan(z_display) and mstd.iloc[-1]) else 0.0
+        move = round(move_raw, 2)
+        # Notional of one unit: qty X shares + 1 Y share (qty is the share ratio on both bases).
+        unit = round(float(abs(qty * px) + abs(py)), 2)
+        if item.get("price_basis", self.price_basis) == "log":
+            gross_log_exposure = 1.0 + abs(beta)
+            exp_r = abs(round(float(move_raw * 100 / gross_log_exposure), 1))
+        else:
+            exp_r = abs(round(float(move_raw * 100 / unit), 1)) if unit else 0.0
+
+        highest_z_in_hl_flag = "No"
+        extreme_z_formatted = ""
+        is_profitable_since_extremum = "N/A"
+        pnl_since_extremum = 0.0
+
+        historical_z_scores = []
+        if not np.isnan(z_display) and hl > 0 and len(spread) >= hl:
+            all_z = (spread - mavg) / mstd
+            z_window = all_z.iloc[-hl:].dropna()
+
+            seen_times = set()
+            for idx, val in all_z.dropna().items():
+                t = int(idx.timestamp())
+                if math.isfinite(val) and t not in seen_times:
+                    seen_times.add(t)
+                    historical_z_scores.append({"time": t, "value": round(float(val), 2)})
+            historical_z_scores.sort(key=lambda p: p["time"])
+
+            if not z_window.empty:
+                current_z_unrounded = float(all_z.iloc[-1])
+                if current_z_unrounded > 0:
+                    extremum_z = float(z_window.max())
+                else:
+                    extremum_z = float(z_window.min())
+                if np.isclose(current_z_unrounded, extremum_z):
+                    highest_z_in_hl_flag = "Yes"
+
+                if math.isfinite(extremum_z):
+                    idxs = z_window[np.isclose(z_window, extremum_z)].index
+                    date_str = idxs[0].strftime("%Y-%m-%d") if len(idxs) > 0 else "N/A"
+                    extreme_z_formatted = f"{round(extremum_z, 1)} ({date_str})"
+
+                    if highest_z_in_hl_flag == "No" and len(idxs) > 0:
+                        spread_at_ext = float(spread.loc[idxs[0]])
+                        trade_sign_at_ext = -1 if extremum_z > 0 else 1
+                        hypothetical_pnl = trade_sign_at_ext * (float(spread.iloc[-1]) - spread_at_ext)
+                        pnl_since_extremum = round(hypothetical_pnl, 2)
+                        is_profitable_since_extremum = "Yes" if hypothetical_pnl > 0 else "No"
+
+        return {
+            "pair": f"{x.replace('.NS','').replace('.BO','')}/{y.replace('.NS','').replace('.BO','')}",
+            "x": x,
+            "y": y,
+            "qty": self._safe_float(qty),
+            "beta": self._safe_float(beta),
+            "direction": item["direction"],
+            "combo": item["combo_str"],
+            "method": item["method"],
+            "engine_version": "v2",
+            "price_basis": item.get("price_basis", self.price_basis),
+            "cadf_pvalue": self._safe_float(item["cadf_pvalue"], 1.0),
+            "johansen_rank": int(item["johansen_rank"]),
+            "price_corr": self._safe_float(item["price_corr"]),
+            "z_score": self._safe_float(z_display),
+            "half_life": hl,
+            "move_to_mean": self._safe_float(move),
+            "exp_return": self._safe_float(exp_r),
+            "unit_price": self._safe_float(unit),
+            "same_sector": same_sector,
+            "extreme_z_in_hl": highest_z_in_hl_flag,
+            "extreme_z_detail": extreme_z_formatted,
+            "profitable_since_extreme": is_profitable_since_extremum,
+            "pnl_since_extreme": self._safe_float(pnl_since_extremum),
+            "historical_z_scores": historical_z_scores,
+        }
+
+    def _run_scan_v2(self, active_tickers):
+        """Screen every pair, return all that pass, ranked by CADF p-value then |z|."""
+        pairs_all = list(combinations(active_tickers, 2))
+        logger.info(f"[v2] Screening all {len(pairs_all)} pairs (CADF + Johansen rank >= 1)...")
+
+        results = []
+        for x, y in pairs_all:
+            try:
+                item = self.screen_pair(x, y)
+                if item:
+                    results.append(self._build_result_v2(item))
+                    logger.info(f"  ✓ {x}/{y} cadf_p={item['cadf_pvalue']:.4f} ({item['price_basis']})")
+            except Exception as e:
+                logger.warning(f"  ✗ {x}/{y} screening failed: {e}")
+
+        results.sort(key=lambda r: (r["cadf_pvalue"], -abs(r["z_score"])))
+        self._attach_vol_metrics(results)
+        logger.info(f"[v2] Screened {len(pairs_all)} pairs -> {len(results)} passed.")
+        return results
+
+    # ========================
     #   MAIN SCAN
     # ========================
 
@@ -570,6 +840,9 @@ class OmniSpreadEngine:
 
         # Fetch industries
         self.fetch_industries()
+
+        if self.engine_version == "v2":
+            return self._run_scan_v2(active_tickers)
 
         # Cell A: screen for cointegrated pairs
         pairs_all = list(combinations(active_tickers, 2))

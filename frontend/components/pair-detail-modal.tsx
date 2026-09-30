@@ -67,9 +67,9 @@ export default function PairDetailModal({ pair, onClose }: PairDetailModalProps)
 
     const stats = [
         { label: "Z-Score", value: `${pair.z_score > 0 ? "+" : ""}${pair.z_score.toFixed(2)}`, color: pair.z_score > 0 ? "var(--color-accent-red)" : "var(--color-accent-green)" },
-        { label: "P(Profit)", value: `${pair.prob_profit.toFixed(2)}%`, sub: `${pair.prob_profit_low.toFixed(2)}–${pair.prob_profit_high.toFixed(2)}%`, color: "var(--color-accent-blue)" },
+        { label: "CADF p", value: pair.cadf_pvalue < 0.001 ? "<0.001" : pair.cadf_pvalue.toFixed(3), color: "var(--color-accent-blue)" },
         { label: "Half-Life", value: `${pair.half_life.toFixed(2)}d`, color: "var(--color-text-primary)" },
-        { label: "Hurst", value: pair.hurst.toFixed(2), color: pair.hurst < 0.35 ? "var(--color-accent-green)" : "var(--color-accent-cyan)" },
+        { label: "Hedge β", value: pair.beta.toFixed(4), color: "var(--color-accent-cyan)" },
         { label: "Exp. Return", value: `${pair.exp_return.toFixed(2)}%`, color: "var(--color-accent-yellow)" },
         { label: "Move to Mean", value: `${pair.move_to_mean.toFixed(2)}`, color: "var(--color-text-secondary)" },
         { label: "Unit Price", value: `₹${pair.unit_price.toFixed(2)}`, color: "var(--color-text-secondary)" },
@@ -112,7 +112,6 @@ export default function PairDetailModal({ pair, onClose }: PairDetailModalProps)
                         }}>
                             <div style={{ fontSize: "10px", color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "4px" }}>{stat.label}</div>
                             <div style={{ fontSize: "17px", fontWeight: 700, fontFamily: "var(--font-mono)", color: stat.color }}>{stat.value}</div>
-                            {"sub" in stat && stat.sub && <div style={{ fontSize: "9.5px", color: "var(--color-text-muted)", marginTop: "2px" }}>{stat.sub}</div>}
                         </div>
                     ))}
                 </div>

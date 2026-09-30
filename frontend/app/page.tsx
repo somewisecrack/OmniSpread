@@ -105,7 +105,7 @@ export default function Home() {
           fontSize: "13px",
           marginTop: "8px",
         }}>
-          Kalman-filtered cointegration • Monte Carlo P(profit) • Hurst exponent
+          CADF + Johansen cointegration • static hedge ratio
         </p>
       </header>
 

@@ -9,6 +9,7 @@ class ScanRequest(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     price_basis: Literal["raw", "log"] = "raw"
+    engine_version: Literal["v1", "v2"] = "v2"
 
 
 class BacktestRequest(BaseModel):
@@ -43,17 +44,22 @@ class PairResult(BaseModel):
     direction: str = ""
     combo: str
     method: str
+    engine_version: str = "v1"
     price_basis: Literal["raw", "log"] = "raw"
+    cadf_pvalue: Optional[float] = None
+    johansen_rank: Optional[int] = None
+    beta: Optional[float] = None
     price_corr: float
     z_score: float
     half_life: int
     move_to_mean: float
     exp_return: float
     unit_price: float
-    hurst: float
-    prob_profit: float
-    prob_profit_low: float
-    prob_profit_high: float
+    # v1 only; absent on v2 rows.
+    hurst: Optional[float] = None
+    prob_profit: Optional[float] = None
+    prob_profit_low: Optional[float] = None
+    prob_profit_high: Optional[float] = None
     same_sector: str
     extreme_z_in_hl: str
     extreme_z_detail: str

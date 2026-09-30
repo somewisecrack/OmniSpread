@@ -36,8 +36,7 @@ COLUMNS = [
     ("price_basis", "BASIS", 5, "<"),
     ("z_score", "Z", 7, ">"),
     ("half_life", "HL", 5, ">"),
-    ("hurst", "HURST", 6, ">"),
-    ("prob_profit", "P(WIN)%", 8, ">"),
+    ("cadf_pvalue", "CADF P", 7, ">"),
     ("exp_return", "EXP.RET", 9, ">"),
     ("same_sector", "SECTOR", 7, "<"),
     ("extreme_z_in_hl", "EXT.Z", 6, "<"),
@@ -46,7 +45,7 @@ COLUMNS = [
 
 def _fmt_cell(value, width, align):
     if isinstance(value, float):
-        text = f"{value:.2f}"
+        text = f"{value:.4f}" if abs(value) < 0.01 and value != 0 else f"{value:.2f}"
     else:
         text = str(value)
     if len(text) > width:
@@ -116,6 +115,7 @@ def cmd_scan(args):
         end_date=args.end,
         top_n=args.top_n,
         price_basis=args.price_basis,
+        engine_version=args.engine_version,
     )
 
     try:
@@ -125,7 +125,10 @@ def cmd_scan(args):
         return 1
 
     if args.min_prob is not None:
-        results = [r for r in results if r.get("prob_profit", 0) >= args.min_prob]
+        if args.engine_version == "v2":
+            print("warning: --min-prob applies to v1 only (v2 has no P(profit)); ignored.", file=sys.stderr)
+        else:
+            results = [r for r in results if r.get("prob_profit", 0) >= args.min_prob]
 
     if args.limit:
         results = results[: args.limit]
@@ -144,7 +147,8 @@ def cmd_scan(args):
         print("\nNo cointegrated pairs matched the criteria.", file=sys.stderr)
         return 0
 
-    print(f"\nTop {len(results)} pairs by P(profit):\n")
+    rank_by = "CADF p-value" if args.engine_version == "v2" else "P(profit)"
+    print(f"\n{len(results)} pairs by {rank_by}:\n")
     _render_table(results)
     return 0
 
@@ -225,7 +229,7 @@ def cmd_backtest(args):
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="omnispread",
-        description="Statistical pairs-trading scanner (Kalman cointegration + Monte Carlo).",
+        description="Statistical pairs-trading scanner (CADF + Johansen cointegration).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -241,10 +245,12 @@ def build_parser():
     p_scan.add_argument("--interval", default="1d", help="Bar interval, e.g. 1d, 60m, 30m, 15m (default: 1d)")
     p_scan.add_argument("--start", help="Start date YYYY-MM-DD (overrides --period when used with --end)")
     p_scan.add_argument("--end", help="End date YYYY-MM-DD")
-    p_scan.add_argument("--top-n", type=int, default=50, help="Max cointegrated pairs to run MC on (default: 50)")
+    p_scan.add_argument("--top-n", type=int, default=50, help="v1 only: max cointegrated pairs to run MC on (default: 50). v2 returns all passing pairs")
+    p_scan.add_argument("--engine-version", default="v2", choices=["v1", "v2"],
+                        help="v2 = CADF + Johansen rank 1, static hedge, all pairs (default); v1 = legacy scan")
     p_scan.add_argument("--price-basis", default="raw", choices=["raw", "log"],
                         help="Run cointegration and spread metrics on raw prices or log prices (default: raw)")
-    p_scan.add_argument("--min-prob", type=float, help="Only show pairs with P(profit) >= this percent")
+    p_scan.add_argument("--min-prob", type=float, help="v1 only: show pairs with P(profit) >= this percent")
     p_scan.add_argument("--limit", type=int, help="Show only the first N pairs")
     p_scan.add_argument("--json", nargs="?", const="-", metavar="FILE",
                         help="Output JSON instead of a table; optional FILE path (default: stdout)")

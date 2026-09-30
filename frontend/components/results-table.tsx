@@ -38,8 +38,8 @@ const tradingDaysSince = (dateStr: string): number => {
 };
 
 export default function ResultsTable({ results, isLoading, onRowClick, interval, endDate }: ResultsTableProps) {
-    const [sortKey, setSortKey] = useState<SortKey>("prob_profit");
-    const [sortAsc, setSortAsc] = useState(false);
+    const [sortKey, setSortKey] = useState<SortKey>("cadf_pvalue");
+    const [sortAsc, setSortAsc] = useState(true);
     const [backtestPair, setBacktestPair] = useState<PairResult | null>(null);
     const [structurePair, setStructurePair] = useState<PairResult | null>(null);
     const [structure, setStructure] = useState<CreditStructureResult | null>(null);
@@ -132,9 +132,9 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
         { key: "method", label: "Method", width: "80px" },
         { key: "price_basis", label: "Basis", width: "60px" },
         { key: "z_score", label: "Z-Score", width: "80px" },
-        { key: "prob_profit", label: "P(Profit)", width: "140px" },
+        { key: "cadf_pvalue", label: "CADF p", width: "70px" },
         { key: "half_life", label: "HL", width: "50px" },
-        { key: "hurst", label: "Hurst", width: "60px" },
+        { key: "johansen_rank", label: "Joh. Rank", width: "60px" },
         { key: "exp_return", label: "Exp.Ret", width: "70px" },
         { key: "move_to_mean", label: "Move", width: "70px" },
 
@@ -261,7 +261,7 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
                                     textAlign: "center",
                                     fontSize: "10.5px",
                                     fontWeight: 600,
-                                    color: res.method === "Both" ? "var(--color-accent-green)" :
+                                    color: res.method === "Both" || res.method === "CADF+Johansen" ? "var(--color-accent-green)" :
                                         res.method === "Johansen" ? "var(--color-accent-purple)" :
                                             "var(--color-accent-blue)",
                                 }}>
@@ -289,60 +289,24 @@ export default function ResultsTable({ results, isLoading, onRowClick, interval,
                                 }}>
                                     {res.z_score > 0 ? "+" : ""}{res.z_score.toFixed(2)}
                                 </td>
-                                {/* P(Profit) with CI */}
-                                <td style={{ padding: "12px 10px", textAlign: "center" }}>
-                                    <div style={{ display: "flex", alignItems: "center", gap: "6px", justifyContent: "center" }}>
-                                        <div style={{
-                                            width: "48px",
-                                            height: "5px",
-                                            borderRadius: "3px",
-                                            background: "rgba(42, 42, 64, 0.5)",
-                                            overflow: "hidden",
-                                        }}>
-                                            <div style={{
-                                                width: `${res.prob_profit}%`,
-                                                height: "100%",
-                                                borderRadius: "3px",
-                                                background: res.prob_profit >= 70
-                                                    ? "linear-gradient(90deg, var(--color-accent-green), var(--color-accent-cyan))"
-                                                    : res.prob_profit >= 50
-                                                        ? "linear-gradient(90deg, var(--color-accent-blue), var(--color-accent-cyan))"
-                                                        : "linear-gradient(90deg, var(--color-accent-yellow), var(--color-accent-red))",
-                                                transition: "width 0.6s ease-out",
-                                            }} />
-                                        </div>
-                                        <span style={{
-                                            fontFamily: "var(--font-mono)",
-                                            fontWeight: 700,
-                                            fontSize: "12px",
-                                            color: res.prob_profit >= 70
-                                                ? "var(--color-accent-green)"
-                                                : res.prob_profit >= 50
-                                                    ? "var(--color-accent-blue)"
-                                                    : "var(--color-accent-yellow)",
-                                        }}>
-                                            {res.prob_profit.toFixed(2)}%
-                                        </span>
-                                    </div>
-                                    <div style={{ fontSize: "9.5px", color: "var(--color-text-muted)", marginTop: "2px" }}>
-                                        {res.prob_profit_low.toFixed(2)}–{res.prob_profit_high.toFixed(2)}%
-                                    </div>
+                                {/* CADF p-value */}
+                                <td style={{
+                                    padding: "12px 10px",
+                                    textAlign: "center",
+                                    fontFamily: "var(--font-mono)",
+                                    fontWeight: 600,
+                                    fontSize: "12px",
+                                    color: res.cadf_pvalue < 0.01 ? "var(--color-accent-green)" : "var(--color-accent-cyan)",
+                                }}>
+                                    {res.cadf_pvalue < 0.001 ? "<0.001" : res.cadf_pvalue.toFixed(3)}
                                 </td>
                                 {/* Half-Life */}
                                 <td style={{ padding: "12px 10px", textAlign: "center", color: "var(--color-text-secondary)", fontSize: "12px" }}>
                                     {formatHalfLife(res.half_life, interval)}
                                 </td>
-                                {/* Hurst */}
-                                <td style={{
-                                    padding: "12px 10px",
-                                    textAlign: "center",
-                                    fontFamily: "var(--font-mono)",
-                                    fontSize: "12px",
-                                    color: res.hurst < 0.35 ? "var(--color-accent-green)" :
-                                        res.hurst < 0.45 ? "var(--color-accent-cyan)" :
-                                            "var(--color-accent-yellow)",
-                                }}>
-                                    {res.hurst.toFixed(2)}
+                                {/* Johansen rank */}
+                                <td style={{ padding: "12px 10px", textAlign: "center", fontFamily: "var(--font-mono)", color: "var(--color-text-secondary)", fontSize: "12px" }}>
+                                    {res.johansen_rank}
                                 </td>
                                 {/* Exp Return */}
                                 <td style={{
